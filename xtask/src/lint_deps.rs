@@ -9,6 +9,8 @@ use std::path::Path;
 
 /// L1 公共层:不依赖任何内部 crate。
 const L1: &[&str] = &[];
+/// L1 契约层:只准依赖 common。
+const L1_KERNEL: &[&str] = &["common"];
 /// L2 基础设施:只准依赖 L1。
 const L2: &[&str] = &["common", "kernel"];
 /// L3 业务域:L1 + L2,禁止依赖彼此。
@@ -38,7 +40,8 @@ const L4: &[&str] = &[
 /// 目录名 → 允许依赖的内部 crate 目录名列表。
 fn allowed_deps(crate_dir: &str) -> Option<&'static [&'static str]> {
     match crate_dir {
-        "common" | "kernel" => Some(L1),
+        "common" => Some(L1),
+        "kernel" => Some(L1_KERNEL),
         "eventbus" | "storage" | "ext" | "notify" | "agent" => Some(L2),
         "server" => Some(L4),
         "xtask" => Some(&[]),

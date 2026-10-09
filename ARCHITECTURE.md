@@ -54,7 +54,6 @@ tests/        # 域级集成测试
 | validate | validator 封装 + 常用规则(域名/分支名/邮箱) |
 | logging | tracing 初始化、span 助手、trace_id 注入与透传 |
 | config | figment 封装(环境变量 > 文件 > 默认)、密钥注入 |
-| testkit | 内存事件总线、testcontainers-PG、实体 fixture builder、HTTP 测试客户端 |
 
 **`kernel`(平台契约):**
 
@@ -66,6 +65,7 @@ tests/        # 域级集成测试
 | events | **领域事件契约(单一事实来源)**:事件信封(id/type/occurred_at/actor/payload)+ 各域事件类型定义,schema 变更走版本化 |
 | lookup | `IdentityLookup` trait(域查用户/组织的抽象,避免依赖 identity 内部) |
 | ext | 扩展点 trait re-export(插件 SDK 的稳定入口) |
+| testkit | 内存事件总线、testcontainers-PG、实体 fixture builder、HTTP 测试客户端 |
 
 ### 1.4 API 契约流(前后端类型安全闭环)
 

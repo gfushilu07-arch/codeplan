@@ -26,9 +26,7 @@ async fn health() -> Json<Health> {
 struct ApiDoc;
 
 async fn openapi_json() -> Json<serde_json::Value> {
-    Json(
-        serde_json::to_value(ApiDoc::openapi()).expect("OpenAPI 文档序列化失败"),
-    )
+    Json(serde_json::to_value(ApiDoc::openapi()).expect("OpenAPI 文档序列化失败"))
 }
 
 #[tokio::main]

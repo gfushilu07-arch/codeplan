@@ -11,7 +11,7 @@
 | 阶段 | 任务数 | 已完成 | 进行中 | 状态 |
 |---|---|---|---|---|
 | 阶段 0 · 工程基建 | 7 | 7 | 0 | ✅ 完成 |
-| 批次一 · 基座 | 20 | 0 | 0 | ⬜ 未开始 |
+| 批次一 · 基座 | 20 | 1 | 0 | 🔄 进行中 |
 | 批次二 · 协作 | 15 | 0 | 0 | ⬜ 未开始 |
 | 批次三 · 流水线 | 18 | 0 | 0 | ⬜ 未开始 |
 | 批次四 · 发布与智能 | 18 | 0 | 0 | ⬜ 未开始 |
@@ -39,7 +39,7 @@
 
 ### 身份与权限
 
-- [ ] **T-101** kernel 契约层:基础强类型 ID、CurrentUser、`Authz`/`AuditSink`/`IdentityLookup` trait、common 工具集(响应/分页/错误码/时间) · [ORG-03] · L
+- [x] **T-101** kernel 契约层:基础强类型 ID(12 个)、CurrentUser、`Authz`/`AuditSink`/`IdentityLookup` trait、common 工具集(ApiResponse/Page/AppError 错误码/ID 宏/时间/axum 适配) · [ORG-03] · L ✅ 2026-10-09(5 个单测过;lint-deps 白名单修正 kernel→common)
 - [ ] **T-102** identity 域:用户/组织/团队模型 + 本地账号(argon2)+ JWT 会话 + 登录/登出 API · [ORG-01,02] · L
 - [ ] **T-103** OIDC 单点登录(openidconnect)+ TOTP 两步验证 · [ORG-02] · M
 - [ ] **T-104** RBAC:系统/项目/自定义角色模型 + Authz 实现 + axum 权限中间件 · [ORG-03] · M
@@ -182,3 +182,4 @@
 | 2026-10-09 | T-005 | 前端 monorepo:16 包(apps/main + 7 packages + 7 features),tokens/ui/shared 真实可用,build/test/lint 全绿 |
 | 2026-10-09 | T-006 | compose 核心三容器 healthy;MinIO 改可选 profile(镜像源受限),开发存储走 fs 后端;端口避让本机其他容器 |
 | 2026-10-09 | T-007 | 最小链路全通:server 健康端点 → OpenAPI → api-client 生成 → 页面代理调用;kernel 事件契约 + testkit 内存总线;阶段 0 完成 ✅ |
+| 2026-10-09 | T-101 | common(AppError/ApiResponse/Page/ID 宏/time/axum 适配)+ kernel(ID/CurrentUser/Authz/AuditSink/IdentityLookup)全部带单测;testkit 归入 kernel::testkit |

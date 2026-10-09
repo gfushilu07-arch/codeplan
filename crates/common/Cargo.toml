@@ -4,5 +4,18 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = []
+# 启用 axum IntoResponse 适配(业务域 api 层与 server 开启)
+axum = ["dep:axum"]
+
+[dependencies]
+axum = { workspace = true, optional = true }
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
 [lints]
 workspace = true
