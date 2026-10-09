@@ -10,7 +10,7 @@
 
 | 阶段 | 任务数 | 已完成 | 进行中 | 状态 |
 |---|---|---|---|---|
-| 阶段 0 · 工程基建 | 7 | 5 | 0 | 🔄 进行中 |
+| 阶段 0 · 工程基建 | 7 | 6 | 0 | 🔄 进行中 |
 | 批次一 · 基座 | 20 | 0 | 0 | ⬜ 未开始 |
 | 批次二 · 协作 | 15 | 0 | 0 | ⬜ 未开始 |
 | 批次三 · 流水线 | 18 | 0 | 0 | ⬜ 未开始 |
@@ -28,7 +28,7 @@
 - [x] **T-003** xtask:`lint-deps`(crate 依赖白名单检查)+ `sync-rules`(AGENTS.md → cursor/copilot/claude 指针) · M ✅ 2026-10-09(20 crate 通过;违规注入自检 exit=1)
 - [ ] **T-004** CI:后端(clippy/test/lint-deps/cargo-deny)+ 前端(lint/test/tsc strict)+ OpenAPI diff 检查 · M
 - [x] **T-005** 前端 monorepo 骨架:pnpm + Turborepo + Vite + apps/main + packages/features 空壳 + tooling 共享配置 · M ✅ 2026-10-09(16 包,build/test/lint 全绿)
-- [ ] **T-006** 本地开发环境:`deploy/docker-compose.yml`(PG/Redis/NATS/MinIO/Nginx)+ 种子数据脚本 · M
+- [x] **T-006** 本地开发环境:`deploy/docker-compose.yml`(PG/Redis/NATS/MinIO/Nginx)+ 种子数据脚本 · M ✅ 2026-10-09(PG/Redis/NATS healthy;调整:MinIO 官方已撤下 Docker Hub 且 ghcr/quay 本网络不可达 → 移入 `--profile s3` 可选 + 镜像变量覆盖,开发存储走 OpenDAL fs 后端;端口改 5434/6381/4223/8223 避开本机其他项目容器;Nginx 归入 T-131 shell 阶段再加)
 - [ ] **T-007** 公共管线:utoipa → OpenAPI → TS client 生成;testkit 雏形(内存事件总线 + testcontainers-PG + fixture) · L
 
 **出口**:CI 全绿;`xtask lint-deps` 守住空壳依赖;一条最小链路(一个假端点 → OpenAPI → TS client → 页面调用)跑通。
@@ -180,3 +180,4 @@
 | 2026-10-09 | T-003 | lint-deps 白名单检查(含违规注入自检)+ sync-rules 生成 5 个工具规则文件 |
 | 2026-10-09 | T-004 | ci.yml(后端六步 + 前端三步)+ deny.toml + rust-toolchain 锁定;fmt/yaml 校验过 |
 | 2026-10-09 | T-005 | 前端 monorepo:16 包(apps/main + 7 packages + 7 features),tokens/ui/shared 真实可用,build/test/lint 全绿 |
+| 2026-10-09 | T-006 | compose 核心三容器 healthy;MinIO 改可选 profile(镜像源受限),开发存储走 fs 后端;端口避让本机其他容器 |
