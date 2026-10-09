@@ -149,6 +149,8 @@ struct ItemRow {
     assignee: Option<uuid::Uuid>,
     reporter: Option<uuid::Uuid>,
     custom_fields: serde_json::Value,
+    parent_id: Option<uuid::Uuid>,
+    board_order: i64,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -170,6 +172,8 @@ impl TryFrom<ItemRow> for WorkItem {
             assignee: r.assignee.map(UserId::from_uuid),
             reporter: r.reporter.map(UserId::from_uuid),
             custom_fields: r.custom_fields,
+            parent_id: r.parent_id.map(crate::domain::WorkItemId::from_uuid),
+            board_order: r.board_order,
             created_at: r.created_at,
             updated_at: r.updated_at,
         })
@@ -177,7 +181,7 @@ impl TryFrom<ItemRow> for WorkItem {
 }
 
 const ITEM_COLS: &str = "id, project_id, item_number, item_type, title, description, status, \
-     priority, assignee, reporter, custom_fields, created_at, updated_at";
+     priority, assignee, reporter, custom_fields, parent_id, board_order, created_at, updated_at";
 
 #[async_trait]
 impl WorkItemRepository for PgWorkItemRepository {
@@ -204,10 +208,11 @@ impl WorkItemRepository for PgWorkItemRepository {
         .map_err(pm_internal)?;
         let row = sqlx::query_as::<_, ItemRow>(
             "INSERT INTO proj_work_item (id, project_id, item_number, item_type, title, \
-             description, status, priority, assignee, reporter, custom_fields) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
+             description, status, priority, assignee, reporter, custom_fields, parent_id) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
              RETURNING id, project_id, item_number, item_type, title, description, status, \
-             priority, assignee, reporter, custom_fields, created_at, updated_at",
+             priority, assignee, reporter, custom_fields, parent_id, board_order, \
+             created_at, updated_at",
         )
         .bind(uuid::Uuid::new_v4())
         .bind(project_id.as_uuid())
@@ -220,6 +225,7 @@ impl WorkItemRepository for PgWorkItemRepository {
         .bind(item.assignee.map(|u| u.as_uuid()))
         .bind(reporter.map(|u| u.as_uuid()))
         .bind(&item.custom_fields)
+        .bind(item.parent_id.map(|p| p.as_uuid()))
         .fetch_one(&mut *tx)
         .await
         .map_err(unique_conflict)?;
@@ -344,6 +350,27 @@ impl WorkItemRepository for PgWorkItemRepository {
         .execute(&self.pool)
         .await
         .map_err(pm_internal)?;
+        Ok(())
+    }
+
+    async fn set_board_positions(
+        &self,
+        positions: &[(crate::domain::WorkItemId, String, i64)],
+    ) -> Result<(), AppError> {
+        let mut tx = self.pool.begin().await.map_err(pm_internal)?;
+        for (id, status, order) in positions {
+            sqlx::query(
+                "UPDATE proj_work_item SET status = $2, board_order = $3, updated_at = now() \
+                 WHERE id = $1",
+            )
+            .bind(id.as_uuid())
+            .bind(status)
+            .bind(order)
+            .execute(&mut *tx)
+            .await
+            .map_err(pm_internal)?;
+        }
+        tx.commit().await.map_err(pm_internal)?;
         Ok(())
     }
 }

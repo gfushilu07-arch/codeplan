@@ -51,6 +51,9 @@ pub fn routes(state: ProjectState) -> Router<ProjectState> {
         )
         .route("/api/milestones/{id}/close", post(close_milestone))
         .route("/api/workitems/{id}/milestone", put(set_item_milestone))
+        .route("/api/projects/{key}/board", get(board_view))
+        .route("/api/projects/{key}/board/reorder", put(board_reorder))
+        .route("/api/projects/{key}/items/tree", get(items_tree))
         .layer(middleware::from_fn_with_state(state, auth_mw))
 }
 
@@ -135,6 +138,8 @@ pub struct CreateItemRequest {
     pub description: String,
     /// 优先级(highest/high/medium/low/lowest)。
     pub priority: Option<String>,
+    /// 父工作项 ID(需求树:epic → story → task)。
+    pub parent_id: Option<String>,
 }
 
 /// 工作项列表查询参数。
@@ -254,6 +259,12 @@ async fn create_item(
                 assignee: None,
                 reporter: Some(user.id),
                 custom_fields: serde_json::json!({}),
+                parent_id: req
+                    .parent_id
+                    .as_deref()
+                    .map(crate::domain::WorkItemId::try_from)
+                    .transpose()
+                    .map_err(|_| AppError::invalid(DOMAIN_CODE, "非法父工作项 ID"))?,
             },
         )
         .await?;
@@ -651,4 +662,125 @@ async fn set_item_milestone(
         message: "已关联".to_owned(),
         data: None,
     }))
+}
+
+// ---------- 多视图(T-113) ----------
+
+/// 看板列。
+#[derive(Debug, Serialize, ToSchema)]
+pub struct BoardColumn {
+    /// 列状态。
+    pub status: String,
+    /// 该列工作项(按 board_order 升序)。
+    pub items: Vec<ItemResponse>,
+    /// 该列总数。
+    pub total: i64,
+}
+
+/// 看板视图查询参数。
+#[derive(Debug, Deserialize, IntoParams)]
+pub struct BoardQuery {
+    /// 按类型过滤(如 story)。
+    pub item_type: Option<String>,
+}
+
+/// 看板视图:按状态分组(列序即工作流顺序)。
+#[utoipa::path(
+    get,
+    path = "/api/projects/{key}/board",
+    params(BoardQuery, ("key" = String, Path)),
+    responses((status = 200))
+)]
+async fn board_view(
+    Extension(user): Extension<CurrentUser>,
+    State(st): State<ProjectState>,
+    Path(key): Path<String>,
+    Query(q): Query<BoardQuery>,
+) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
+    let item_type = q.item_type.as_deref().and_then(ItemType::from_str_opt);
+    let view = st.svc.board_view(&user, &key, item_type).await?;
+    Ok(Json(ApiResponse::ok(view)))
+}
+
+/// 看板拖拽重排请求。
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct BoardReorderRequest {
+    /// 变更列表:工作项 ID + 目标状态 + 列内顺序。
+    pub items: Vec<BoardPosition>,
+}
+
+/// 看板位置。
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct BoardPosition {
+    /// 工作项 ID。
+    pub id: String,
+    /// 目标状态(拖入的列)。
+    pub status: String,
+    /// 列内顺序(0 起)。
+    pub board_order: i64,
+}
+
+/// 看板拖拽重排(跨列拖拽会做工作流校验)。
+#[utoipa::path(
+    put,
+    path = "/api/projects/{key}/board/reorder",
+    request_body = BoardReorderRequest,
+    params(("key" = String, Path)),
+    responses((status = 200), (status = 409))
+)]
+async fn board_reorder(
+    Extension(user): Extension<CurrentUser>,
+    State(st): State<ProjectState>,
+    Path(key): Path<String>,
+    Json(req): Json<BoardReorderRequest>,
+) -> Result<Json<ApiResponse<()>>, AppError> {
+    let positions = req
+        .items
+        .iter()
+        .map(|p| {
+            let id = crate::domain::WorkItemId::try_from(p.id.as_str())
+                .map_err(|_| AppError::invalid(DOMAIN_CODE, "非法工作项 ID"))?;
+            Ok((id, p.status.clone(), p.board_order))
+        })
+        .collect::<Result<Vec<_>, AppError>>()?;
+    st.svc.reorder_board(&user, &key, &positions).await?;
+    Ok(Json(ApiResponse {
+        code: "OK".to_owned(),
+        message: "已重排".to_owned(),
+        data: None,
+    }))
+}
+
+/// 树形节点(契约示例;实际载荷为嵌套 JSON)。
+#[allow(dead_code)]
+#[derive(Debug, Serialize, ToSchema)]
+pub struct TreeNode {
+    /// 工作项 ID。
+    pub id: String,
+    /// 展示编号({项目键}-{编号})。
+    pub display_key: String,
+    /// 类型。
+    pub item_type: String,
+    /// 标题。
+    pub title: String,
+    /// 状态。
+    pub status: String,
+    /// 子节点。
+    pub children: Vec<TreeNode>,
+}
+
+/// 需求树(epic → story → task)。
+#[utoipa::path(
+    get,
+    path = "/api/projects/{key}/items/tree",
+    params(("key" = String, Path)),
+    responses((status = 200))
+)]
+async fn items_tree(
+    Extension(user): Extension<CurrentUser>,
+    State(st): State<ProjectState>,
+    Path(key): Path<String>,
+) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
+    let tree = st.svc.items_tree(&user, &key).await?;
+    Ok(Json(ApiResponse::ok(serde_json::Value::Array(tree))))
 }

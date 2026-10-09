@@ -147,6 +147,10 @@ pub struct WorkItem {
     pub reporter: Option<UserId>,
     /// 自定义字段(JSONB)。
     pub custom_fields: serde_json::Value,
+    /// 父工作项(需求树:epic → story → task)。
+    pub parent_id: Option<WorkItemId>,
+    /// 看板列内排序(小在前)。
+    pub board_order: i64,
     /// 创建时间。
     pub created_at: DateTime<Utc>,
     /// 更新时间。
@@ -183,6 +187,8 @@ pub struct NewWorkItem {
     pub reporter: Option<UserId>,
     /// 自定义字段。
     pub custom_fields: serde_json::Value,
+    /// 父工作项。
+    pub parent_id: Option<WorkItemId>,
 }
 
 /// 项目仓储抽象。
@@ -275,6 +281,15 @@ pub trait WorkItemRepository: Send + Sync {
         &self,
         id: WorkItemId,
         milestone_id: Option<MilestoneId>,
+    ) -> Result<(), AppError>;
+
+    /// 看板批量重排:更新状态与列内排序(拖拽)。
+    ///
+    /// # Errors
+    /// 存储故障。
+    async fn set_board_positions(
+        &self,
+        positions: &[(WorkItemId, String, i64)],
     ) -> Result<(), AppError>;
 }
 
