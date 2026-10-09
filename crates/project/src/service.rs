@@ -320,9 +320,13 @@ impl ProjectService {
         let project = self.project_by_key(project_key).await?;
         self.ensure(actor, Action::Write, project.id).await?;
         let sm = StateMachine::builtin(item.item_type);
+        // 缺陷特化:规范化 custom_fields(severity 缺省注入/非法校验,T-114)
+        let normalized = Self::normalize_custom_fields(item.item_type, &item.custom_fields)?;
+        let mut item = item.clone();
+        item.custom_fields = normalized;
         let created = self
             .items
-            .create(project.id, item, sm.initial(), Some(actor.id))
+            .create(project.id, &item, sm.initial(), Some(actor.id))
             .await?;
         let _ = self
             .events
@@ -392,6 +396,16 @@ impl ProjectService {
                 format!("非法流转:{} → {}", item.status, to),
             ));
         }
+        // 缺陷门禁:流转到 resolved 须有复现步骤(T-114)
+        if item.item_type == ItemType::Bug && to == "resolved" {
+            let fields = crate::domain::BugFields::from_custom_fields(&item.custom_fields)?;
+            if !fields.ready_to_resolve() {
+                return Err(AppError::invalid(
+                    DOMAIN_CODE,
+                    "缺陷修复前须填写复现步骤(custom_fields.repro_steps)",
+                ));
+            }
+        }
         let updated = self.items.update_status(item_id, to).await?;
         let _ = self
             .events
@@ -431,9 +445,20 @@ impl ProjectService {
             .await?
             .ok_or_else(|| AppError::not_found(DOMAIN_CODE, "工作项不存在"))?;
         self.ensure(actor, Action::Write, item.project_id).await?;
+        let custom_fields = match custom_fields {
+            Some(cf) => Some(Self::normalize_custom_fields(item.item_type, cf)?),
+            None => None,
+        };
         let updated = self
             .items
-            .update_fields(item_id, title, description, priority, None, custom_fields)
+            .update_fields(
+                item_id,
+                title,
+                description,
+                priority,
+                None,
+                custom_fields.as_ref(),
+            )
             .await?;
         let _ = self
             .events
@@ -616,6 +641,18 @@ impl ProjectService {
             roots.extend(nodes.into_iter().filter(|_| false)); // 孤儿任务不进树(通过列表视图访问)
         }
         Ok(roots)
+    }
+
+    /// 缺陷类型:规范化 custom_fields(severity 注入默认/非法即 400);其他类型原样。
+    fn normalize_custom_fields(
+        item_type: ItemType,
+        custom_fields: &serde_json::Value,
+    ) -> Result<serde_json::Value, AppError> {
+        if item_type != ItemType::Bug {
+            return Ok(custom_fields.to_owned());
+        }
+        let fields = crate::domain::BugFields::from_custom_fields(custom_fields)?;
+        Ok(fields.merged_into(custom_fields))
     }
 
     async fn ensure(

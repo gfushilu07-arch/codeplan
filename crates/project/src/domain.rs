@@ -497,3 +497,153 @@ pub trait MilestoneRepository: Send + Sync {
     /// 存储故障。
     async fn progress(&self, id: MilestoneId) -> Result<MilestoneProgress, AppError>;
 }
+
+/// 缺陷严重程度。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Severity {
+    /// 阻断。
+    Blocker,
+    /// 严重。
+    Critical,
+    /// 一般。
+    Major,
+    /// 轻微。
+    Minor,
+    /// 微小。
+    Trivial,
+}
+
+impl Severity {
+    /// 存储值。
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Blocker => "blocker",
+            Self::Critical => "critical",
+            Self::Major => "major",
+            Self::Minor => "minor",
+            Self::Trivial => "trivial",
+        }
+    }
+
+    /// 从字符串解析。
+    #[must_use]
+    pub fn from_str_opt(value: &str) -> Option<Self> {
+        match value {
+            "blocker" => Some(Self::Blocker),
+            "critical" => Some(Self::Critical),
+            "major" => Some(Self::Major),
+            "minor" => Some(Self::Minor),
+            "trivial" => Some(Self::Trivial),
+            _ => None,
+        }
+    }
+}
+
+/// 缺陷特化字段(T-114):存于 `custom_fields`,经类型化校验。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BugFields {
+    /// 严重程度。
+    pub severity: Severity,
+    /// 复现步骤(流转到 resolved 前必须补齐,回归依据)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repro_steps: Option<String>,
+}
+
+impl BugFields {
+    /// 缺省严重程度(未显式给出时注入)。
+    pub const DEFAULT_SEVERITY: &'static str = "major";
+
+    /// 从 custom_fields 解析;缺 severity 时注入默认值。
+    ///
+    /// # Errors
+    /// severity 非法(不在枚举内)返回 `PM-400`。
+    pub fn from_custom_fields(fields: &serde_json::Value) -> Result<Self, AppError> {
+        let severity_str = fields
+            .get("severity")
+            .and_then(|v| v.as_str())
+            .unwrap_or(Self::DEFAULT_SEVERITY);
+        let severity = Severity::from_str_opt(severity_str).ok_or_else(|| {
+            AppError::invalid(
+                DOMAIN_CODE,
+                format!("非法严重程度:{severity_str}(可选 blocker/critical/major/minor/trivial)"),
+            )
+        })?;
+        Ok(Self {
+            severity,
+            repro_steps: fields
+                .get("repro_steps")
+                .and_then(|v| v.as_str())
+                .map(str::to_owned),
+        })
+    }
+
+    /// 写回 custom_fields(合并而非覆盖其他自定义字段)。
+    #[must_use]
+    pub fn merged_into(&self, fields: &serde_json::Value) -> serde_json::Value {
+        let mut out = fields.clone();
+        let obj = out.as_object_mut().expect("custom_fields 应为对象");
+        obj.insert(
+            "severity".to_owned(),
+            serde_json::Value::String(self.severity.as_str().to_owned()),
+        );
+        if let Some(steps) = &self.repro_steps {
+            obj.insert(
+                "repro_steps".to_owned(),
+                serde_json::Value::String(steps.clone()),
+            );
+        }
+        out
+    }
+
+    /// 流转到 resolved 的门禁:复现步骤必须已填写(回归依据)。
+    #[must_use]
+    pub fn ready_to_resolve(&self) -> bool {
+        self.repro_steps
+            .as_deref()
+            .is_some_and(|s| !s.trim().is_empty())
+    }
+}
+
+#[cfg(test)]
+mod bug_fields_tests {
+    use super::*;
+
+    #[test]
+    fn missing_severity_defaults_to_major() {
+        let f = BugFields::from_custom_fields(&serde_json::json!({})).expect("应成功");
+        assert_eq!(f.severity, Severity::Major);
+    }
+
+    #[test]
+    fn invalid_severity_rejected() {
+        let err = BugFields::from_custom_fields(&serde_json::json!({"severity": "mega"}))
+            .expect_err("非法严重程度应拒绝");
+        assert_eq!(err.code(), "PM-400");
+    }
+
+    #[test]
+    fn valid_severity_and_repro_roundtrip() {
+        let f = BugFields::from_custom_fields(&serde_json::json!({
+            "severity": "blocker", "repro_steps": "1. 打开 2. 爆炸"
+        }))
+        .expect("应成功");
+        assert_eq!(f.severity, Severity::Blocker);
+        assert!(f.ready_to_resolve());
+        let merged = f.merged_into(&serde_json::json!({"custom": 1}));
+        assert_eq!(merged["severity"], "blocker");
+        assert_eq!(merged["custom"], 1, "不应覆盖其他自定义字段");
+    }
+
+    #[test]
+    fn resolve_gate_requires_repro() {
+        let no_repro = BugFields::from_custom_fields(&serde_json::json!({"severity": "minor"}))
+            .expect("应成功");
+        assert!(!no_repro.ready_to_resolve());
+        let blank = BugFields::from_custom_fields(&serde_json::json!({
+            "severity": "minor", "repro_steps": "   "
+        }))
+        .expect("应成功");
+        assert!(!blank.ready_to_resolve(), "空白复现步骤不算已填");
+    }
+}

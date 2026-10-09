@@ -140,6 +140,8 @@ pub struct CreateItemRequest {
     pub priority: Option<String>,
     /// 父工作项 ID(需求树:epic → story → task)。
     pub parent_id: Option<String>,
+    /// 自定义字段(缺陷:severity/repro_steps,服务端类型化校验)。
+    pub custom_fields: Option<serde_json::Value>,
 }
 
 /// 工作项列表查询参数。
@@ -167,6 +169,8 @@ pub struct UpdateItemRequest {
     pub description: Option<String>,
     /// 新优先级。
     pub priority: Option<String>,
+    /// 自定义字段(增量合并语义由服务端决定;缺陷类型会做规范化校验)。
+    pub custom_fields: Option<serde_json::Value>,
 }
 
 fn item_response(item: &crate::domain::WorkItem) -> ItemResponse {
@@ -180,6 +184,15 @@ fn item_response(item: &crate::domain::WorkItem) -> ItemResponse {
         assignee: item.assignee.map(|u| u.as_uuid().to_string()),
         custom_fields: item.custom_fields.clone(),
     }
+}
+
+/// 取缺陷严重程度(custom_fields.severity)。
+#[allow(dead_code)]
+fn severity_of(item: &crate::domain::WorkItem) -> Option<&str> {
+    if item.item_type != ItemType::Bug {
+        return None;
+    }
+    item.custom_fields.get("severity").and_then(|v| v.as_str())
 }
 
 /// 创建项目(发布 `project.created`,创建者自动成为 admin)。
@@ -258,7 +271,7 @@ async fn create_item(
                 priority,
                 assignee: None,
                 reporter: Some(user.id),
-                custom_fields: serde_json::json!({}),
+                custom_fields: req.custom_fields.unwrap_or_else(|| serde_json::json!({})),
                 parent_id: req
                     .parent_id
                     .as_deref()
@@ -369,7 +382,7 @@ async fn update_item(
             req.title.as_deref(),
             req.description.as_deref(),
             priority,
-            None,
+            req.custom_fields.as_ref(),
         )
         .await?;
     Ok(Json(ApiResponse::ok(item_response(&updated))))
