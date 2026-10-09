@@ -33,7 +33,9 @@ fn write(path: &Path, content: &str) -> Result<(), String> {
 
 fn cursor_frontmatter(description: &str, globs: Option<&str>) -> String {
     match globs {
-        Some(g) => format!("---\ndescription: {description}\nglobs: {g}\nalwaysApply: false\n---\n\n"),
+        Some(g) => {
+            format!("---\ndescription: {description}\nglobs: {g}\nalwaysApply: false\n---\n\n")
+        }
         None => format!("---\ndescription: {description}\nalwaysApply: true\n---\n\n"),
     }
 }
@@ -56,8 +58,10 @@ pub fn run(repo_root: &Path) -> Result<(), String> {
     write(&repo_root.join(".cursor/rules/codeplan.mdc"), &root_doc)?;
 
     if let Some(rules) = read_optional(&repo_root.join("crates/AGENTS.md"))? {
-        let doc = cursor_frontmatter("后端域规则(生成自 crates/AGENTS.md,勿手改)", Some("crates/**"))
-            + &rules;
+        let doc = cursor_frontmatter(
+            "后端域规则(生成自 crates/AGENTS.md,勿手改)",
+            Some("crates/**"),
+        ) + &rules;
         write(&repo_root.join(".cursor/rules/codeplan-crates.mdc"), &doc)?;
     }
     if let Some(rules) = read_optional(&repo_root.join("web/AGENTS.md"))? {
@@ -69,9 +73,7 @@ pub fn run(repo_root: &Path) -> Result<(), String> {
     // GitHub Copilot
     write(
         &repo_root.join(".github/copilot-instructions.md"),
-        &format!(
-            "<!-- 由 xtask sync-rules 生成,勿手改;事实来源:AGENTS.md -->\n\n{root_rules}"
-        ),
+        &format!("<!-- 由 xtask sync-rules 生成,勿手改;事实来源:AGENTS.md -->\n\n{root_rules}"),
     )?;
 
     println!("sync-rules:完成 ✓");
