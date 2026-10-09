@@ -212,3 +212,109 @@ fn unique_conflict(e: sqlx::Error) -> AppError {
     }
     AppError::internal(DOMAIN_CODE)
 }
+
+/// 资源角色存储的 PostgreSQL 实现。
+#[derive(Clone)]
+pub struct PgRbacStore {
+    pool: PgPool,
+}
+
+impl PgRbacStore {
+    /// 构造(共享连接池)。
+    #[must_use]
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl crate::domain::RbacStore for PgRbacStore {
+    async fn grant(
+        &self,
+        user_id: UserId,
+        kind: &str,
+        resource_id: uuid::Uuid,
+        role: crate::domain::ResourceRole,
+    ) -> Result<(), AppError> {
+        sqlx::query(
+            "INSERT INTO org_resource_role (user_id, resource_kind, resource_id, role) \
+             VALUES ($1, $2, $3, $4) \
+             ON CONFLICT (user_id, resource_kind, resource_id) \
+             DO UPDATE SET role = EXCLUDED.role, granted_at = now()",
+        )
+        .bind(user_id.as_uuid())
+        .bind(kind)
+        .bind(resource_id)
+        .bind(role.as_str())
+        .execute(&self.pool)
+        .await
+        .map_err(|_| AppError::internal(DOMAIN_CODE))?;
+        Ok(())
+    }
+
+    async fn revoke(
+        &self,
+        user_id: UserId,
+        kind: &str,
+        resource_id: uuid::Uuid,
+    ) -> Result<(), AppError> {
+        sqlx::query(
+            "DELETE FROM org_resource_role \
+             WHERE user_id = $1 AND resource_kind = $2 AND resource_id = $3",
+        )
+        .bind(user_id.as_uuid())
+        .bind(kind)
+        .bind(resource_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| AppError::internal(DOMAIN_CODE))?;
+        Ok(())
+    }
+
+    async fn role_of(
+        &self,
+        user_id: UserId,
+        kind: &str,
+        resource_id: uuid::Uuid,
+    ) -> Result<Option<crate::domain::ResourceRole>, AppError> {
+        let row: Option<(String,)> = sqlx::query_as(
+            "SELECT role FROM org_resource_role \
+             WHERE user_id = $1 AND resource_kind = $2 AND resource_id = $3",
+        )
+        .bind(user_id.as_uuid())
+        .bind(kind)
+        .bind(resource_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|_| AppError::internal(DOMAIN_CODE))?;
+        Ok(row.and_then(|(role,)| crate::domain::ResourceRole::from_str_opt(&role)))
+    }
+
+    async fn members(
+        &self,
+        kind: &str,
+        resource_id: uuid::Uuid,
+    ) -> Result<Vec<crate::domain::MemberEntry>, AppError> {
+        let rows: Vec<(uuid::Uuid, String, String, String)> = sqlx::query_as(
+            "SELECT r.user_id, u.username, u.display_name, r.role \
+             FROM org_resource_role r JOIN org_user u ON u.id = r.user_id \
+             WHERE r.resource_kind = $1 AND r.resource_id = $2 ORDER BY r.granted_at",
+        )
+        .bind(kind)
+        .bind(resource_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|_| AppError::internal(DOMAIN_CODE))?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|(id, username, display_name, role)| {
+                Some(crate::domain::MemberEntry {
+                    user_id: UserId::from_uuid(id),
+                    username,
+                    display_name,
+                    role: crate::domain::ResourceRole::from_str_opt(&role)?,
+                })
+            })
+            .collect())
+    }
+}

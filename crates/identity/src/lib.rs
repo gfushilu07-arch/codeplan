@@ -7,6 +7,7 @@ pub mod api;
 pub mod domain;
 pub mod infra;
 pub mod oidc;
+pub mod rbac;
 pub mod service;
 
 #[cfg(test)]

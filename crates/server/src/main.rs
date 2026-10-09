@@ -59,12 +59,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     sqlx::migrate!("../../migrations").run(&pool).await?;
 
     // 身份域装配
-    let users: Arc<dyn codeplan_identity::domain::UserRepository> =
-        Arc::new(codeplan_identity::infra::PgUserRepository::new(pool));
+    let users: Arc<dyn codeplan_identity::domain::UserRepository> = Arc::new(
+        codeplan_identity::infra::PgUserRepository::new(pool.clone()),
+    );
     let jwt_secret = env_or("CODEPLAN_JWT_SECRET", "dev-secret-do-not-use-in-prod");
     let auth = Arc::new(codeplan_identity::service::AuthService::new(
-        users,
+        Arc::clone(&users),
         &jwt_secret,
+    ));
+    let rbac = Arc::new(codeplan_identity::rbac::RbacService::new(
+        Arc::new(codeplan_identity::infra::PgRbacStore::new(pool.clone())),
+        users,
     ));
     auth.bootstrap_admin_if_empty(&env_or(
         "CODEPLAN_BOOTSTRAP_ADMIN_PASSWORD",
@@ -74,7 +79,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let oidc = codeplan_identity::oidc::OidcConfig::from_env()
         .map(|cfg| Arc::new(codeplan_identity::oidc::OidcCtx::new(cfg)));
-    let state = codeplan_identity::api::AuthState { auth, oidc };
+    let state = codeplan_identity::api::AuthState { auth, oidc, rbac };
 
     let mut app = Router::new()
         .route("/api/health", get(health))

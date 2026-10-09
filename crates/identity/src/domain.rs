@@ -167,3 +167,109 @@ pub trait OrgRepository: Send + Sync {
     /// 存储故障。
     async fn list(&self) -> Result<Vec<Organization>, codeplan_common::error::AppError>;
 }
+
+/// 资源级角色(项目/仓库/应用上的成员角色)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResourceRole {
+    /// 只读。
+    Read,
+    /// 读写。
+    Write,
+    /// 管理(成员/设置)。
+    Admin,
+}
+
+impl ResourceRole {
+    /// 数据库存储值。
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Read => "read",
+            Self::Write => "write",
+            Self::Admin => "admin",
+        }
+    }
+
+    /// 从数据库值解析。
+    #[must_use]
+    pub fn from_str_opt(value: &str) -> Option<Self> {
+        match value {
+            "read" => Some(Self::Read),
+            "write" => Some(Self::Write),
+            "admin" => Some(Self::Admin),
+            _ => None,
+        }
+    }
+
+    /// 角色是否隐含所需动作(read ⊂ write ⊂ admin)。
+    #[must_use]
+    pub fn implies(self, action: codeplan_kernel::authz::Action) -> bool {
+        use codeplan_kernel::authz::Action;
+        match action {
+            Action::Read => true,
+            Action::Write => self != Self::Read,
+            Action::Admin => self == Self::Admin,
+        }
+    }
+}
+
+/// 成员条目(带展示信息)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemberEntry {
+    /// 用户 ID。
+    pub user_id: UserId,
+    /// 登录名。
+    pub username: String,
+    /// 显示名。
+    pub display_name: String,
+    /// 角色。
+    pub role: ResourceRole,
+}
+
+/// 资源角色存储抽象。
+#[async_trait::async_trait]
+pub trait RbacStore: Send + Sync {
+    /// 授予/更新用户在资源上的角色(upsert)。
+    ///
+    /// # Errors
+    /// 存储故障。
+    async fn grant(
+        &self,
+        user_id: UserId,
+        kind: &str,
+        resource_id: uuid::Uuid,
+        role: ResourceRole,
+    ) -> Result<(), codeplan_common::error::AppError>;
+
+    /// 撤销用户在资源上的角色(不存在则幂等成功)。
+    ///
+    /// # Errors
+    /// 存储故障。
+    async fn revoke(
+        &self,
+        user_id: UserId,
+        kind: &str,
+        resource_id: uuid::Uuid,
+    ) -> Result<(), codeplan_common::error::AppError>;
+
+    /// 查用户在资源上的角色。
+    ///
+    /// # Errors
+    /// 存储故障。
+    async fn role_of(
+        &self,
+        user_id: UserId,
+        kind: &str,
+        resource_id: uuid::Uuid,
+    ) -> Result<Option<ResourceRole>, codeplan_common::error::AppError>;
+
+    /// 资源成员列表(含用户展示信息,JOIN org_user)。
+    ///
+    /// # Errors
+    /// 存储故障。
+    async fn members(
+        &self,
+        kind: &str,
+        resource_id: uuid::Uuid,
+    ) -> Result<Vec<MemberEntry>, codeplan_common::error::AppError>;
+}

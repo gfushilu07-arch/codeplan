@@ -1,6 +1,6 @@
 //! 测试支撑:内存用户仓储(cfg(test) 专用,不得进入生产路径)。
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use codeplan_common::error::AppError;
 use codeplan_kernel::ids::UserId;
@@ -133,5 +133,98 @@ impl UserRepository for InMemoryUserRepository {
             u.updated_at = codeplan_common::time::now();
         }
         Ok(())
+    }
+}
+
+/// 内存资源角色存储(与用户表共享,便于 members 透出展示信息)。
+pub struct InMemoryRbacStore {
+    users: Arc<InMemoryUserRepository>,
+    entries: Mutex<Vec<(UserId, String, uuid::Uuid, crate::domain::ResourceRole)>>,
+}
+
+impl InMemoryRbacStore {
+    /// 绑定用户表创建空存储。
+    #[must_use]
+    pub fn new(users: Arc<InMemoryUserRepository>) -> Self {
+        Self {
+            users,
+            entries: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::domain::RbacStore for InMemoryRbacStore {
+    async fn grant(
+        &self,
+        user_id: UserId,
+        kind: &str,
+        resource_id: uuid::Uuid,
+        role: crate::domain::ResourceRole,
+    ) -> Result<(), AppError> {
+        let mut e = self.entries.lock().expect("锁");
+        if let Some(slot) = e
+            .iter_mut()
+            .find(|(u, k, r, _)| *u == user_id && k == kind && *r == resource_id)
+        {
+            slot.3 = role;
+        } else {
+            e.push((user_id, kind.to_owned(), resource_id, role));
+        }
+        Ok(())
+    }
+
+    async fn revoke(
+        &self,
+        user_id: UserId,
+        kind: &str,
+        resource_id: uuid::Uuid,
+    ) -> Result<(), AppError> {
+        self.entries
+            .lock()
+            .expect("锁")
+            .retain(|(u, k, r, _)| !(*u == user_id && k == kind && *r == resource_id));
+        Ok(())
+    }
+
+    async fn role_of(
+        &self,
+        user_id: UserId,
+        kind: &str,
+        resource_id: uuid::Uuid,
+    ) -> Result<Option<crate::domain::ResourceRole>, AppError> {
+        Ok(self
+            .entries
+            .lock()
+            .expect("锁")
+            .iter()
+            .find(|(u, k, r, _)| *u == user_id && k == kind && *r == resource_id)
+            .map(|(_, _, _, role)| *role))
+    }
+
+    async fn members(
+        &self,
+        kind: &str,
+        resource_id: uuid::Uuid,
+    ) -> Result<Vec<crate::domain::MemberEntry>, AppError> {
+        let users = self.users.users.lock().expect("锁");
+        Ok(self
+            .entries
+            .lock()
+            .expect("锁")
+            .iter()
+            .filter(|(_, k, r, _)| k == kind && *r == resource_id)
+            .filter_map(|(u, _, _, role)| {
+                users
+                    .iter()
+                    .find(|user| user.id == *u)
+                    .map(|user| crate::domain::MemberEntry {
+                        user_id: user.id,
+                        username: user.username.clone(),
+                        display_name: user.display_name.clone(),
+                        role: *role,
+                    })
+            })
+            .collect())
     }
 }

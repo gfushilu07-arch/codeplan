@@ -8,7 +8,7 @@ use codeplan_common::response::ApiResponse;
 use codeplan_kernel::identity::CurrentUser;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use utoipa::{OpenApi, ToSchema};
+use utoipa::{IntoParams, OpenApi, ToSchema};
 
 use crate::DOMAIN_CODE;
 use crate::service::AuthService;
@@ -20,6 +20,8 @@ pub struct AuthState {
     pub auth: Arc<AuthService>,
     /// OIDC 上下文(未启用为 None)。
     pub oidc: Option<Arc<crate::oidc::OidcCtx>>,
+    /// RBAC 服务。
+    pub rbac: Arc<crate::rbac::RbacService>,
 }
 
 /// 身份域路由(挂载到 `/api`)。
@@ -32,6 +34,10 @@ pub fn routes() -> Router<AuthState> {
         .route("/api/auth/totp/disable", axum::routing::post(totp_disable))
         .route("/api/auth/logout", axum::routing::post(logout))
         .route("/api/me", axum::routing::get(me))
+        .route("/api/rbac/grant", axum::routing::post(rbac_grant))
+        .route("/api/rbac/revoke", axum::routing::post(rbac_revoke))
+        .route("/api/rbac/members", axum::routing::get(rbac_members))
+        .route("/api/rbac/my-role", axum::routing::get(rbac_my_role))
 }
 
 /// 登录请求。
@@ -281,4 +287,154 @@ pub struct IdentityApiDoc;
 #[must_use]
 pub fn openapi() -> utoipa::openapi::OpenApi {
     IdentityApiDoc::openapi()
+}
+
+/// 授予成员角色请求。
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct RbacGrantRequest {
+    /// 资源种类:project/repo/app。
+    pub resource_kind: String,
+    /// 资源 ID。
+    pub resource_id: String,
+    /// 目标用户登录名。
+    pub username: String,
+    /// 角色:read/write/admin。
+    pub role: String,
+}
+
+/// 撤销成员角色请求。
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct RbacRevokeRequest {
+    /// 资源种类。
+    pub resource_kind: String,
+    /// 资源 ID。
+    pub resource_id: String,
+    /// 目标用户登录名。
+    pub username: String,
+}
+
+/// 成员条目。
+#[derive(Debug, Serialize, ToSchema)]
+pub struct RbacMemberResponse {
+    /// 用户 ID。
+    pub user_id: String,
+    /// 登录名。
+    pub username: String,
+    /// 显示名。
+    pub display_name: String,
+    /// 角色。
+    pub role: String,
+}
+
+/// 我的角色。
+#[derive(Debug, Serialize, ToSchema)]
+pub struct MyRoleResponse {
+    /// 角色(read/write/admin),无则 null。
+    pub role: Option<String>,
+}
+
+fn parse_role(role: &str) -> Result<crate::domain::ResourceRole, AppError> {
+    crate::domain::ResourceRole::from_str_opt(role)
+        .ok_or_else(|| AppError::invalid(DOMAIN_CODE, format!("非法角色:{role}")))
+}
+
+/// 管理员授予/更新成员角色。
+#[utoipa::path(
+    post,
+    path = "/api/rbac/grant",
+    request_body = RbacGrantRequest,
+    responses((status = 200), (status = 403))
+)]
+async fn rbac_grant(
+    user: CurrentUser,
+    State(state): State<AuthState>,
+    Json(req): Json<RbacGrantRequest>,
+) -> Result<Json<ApiResponse<()>>, AppError> {
+    let resource = crate::rbac::ResourceLocator::parse(&req.resource_kind, &req.resource_id)?;
+    let role = parse_role(&req.role)?;
+    state
+        .rbac
+        .grant(&user, resource, &req.username, role)
+        .await?;
+    Ok(Json(ApiResponse {
+        code: "OK".to_owned(),
+        message: "已授予".to_owned(),
+        data: None,
+    }))
+}
+
+/// 管理员撤销成员角色。
+#[utoipa::path(
+    post,
+    path = "/api/rbac/revoke",
+    request_body = RbacRevokeRequest,
+    responses((status = 200), (status = 403))
+)]
+async fn rbac_revoke(
+    user: CurrentUser,
+    State(state): State<AuthState>,
+    Json(req): Json<RbacRevokeRequest>,
+) -> Result<Json<ApiResponse<()>>, AppError> {
+    let resource = crate::rbac::ResourceLocator::parse(&req.resource_kind, &req.resource_id)?;
+    state.rbac.revoke(&user, resource, &req.username).await?;
+    Ok(Json(ApiResponse {
+        code: "OK".to_owned(),
+        message: "已撤销".to_owned(),
+        data: None,
+    }))
+}
+
+/// 成员列表查询参数。
+#[derive(Debug, Deserialize, IntoParams)]
+pub struct RbacResourceQuery {
+    /// 资源种类。
+    pub kind: String,
+    /// 资源 ID。
+    pub id: String,
+}
+
+/// 成员列表。
+#[utoipa::path(
+    get,
+    path = "/api/rbac/members",
+    params(RbacResourceQuery),
+    responses((status = 200, body = RbacMemberResponse))
+)]
+async fn rbac_members(
+    user: CurrentUser,
+    State(state): State<AuthState>,
+    axum::extract::Query(q): axum::extract::Query<RbacResourceQuery>,
+) -> Result<Json<ApiResponse<Vec<RbacMemberResponse>>>, AppError> {
+    let resource = crate::rbac::ResourceLocator::parse(&q.kind, &q.id)?;
+    let members = state.rbac.members(&user, resource).await?;
+    Ok(Json(ApiResponse::ok(
+        members
+            .into_iter()
+            .map(|m| RbacMemberResponse {
+                user_id: m.user_id.as_uuid().to_string(),
+                username: m.username,
+                display_name: m.display_name,
+                role: m.role.as_str().to_owned(),
+            })
+            .collect(),
+    )))
+}
+
+/// 查询自己在资源上的角色。
+#[utoipa::path(
+    get,
+    path = "/api/rbac/my-role",
+    params(RbacResourceQuery),
+    responses((status = 200, body = MyRoleResponse))
+)]
+async fn rbac_my_role(
+    user: CurrentUser,
+    State(state): State<AuthState>,
+    axum::extract::Query(q): axum::extract::Query<RbacResourceQuery>,
+) -> Result<Json<ApiResponse<MyRoleResponse>>, AppError> {
+    let resource = crate::rbac::ResourceLocator::parse(&q.kind, &q.id)?;
+    let role = state.rbac.my_role(&user, resource).await?;
+    Ok(Json(ApiResponse::ok(MyRoleResponse {
+        role: role.map(|r| r.as_str().to_owned()),
+    })))
 }

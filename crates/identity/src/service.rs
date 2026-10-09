@@ -389,7 +389,6 @@ mod tests {
     use std::sync::Arc;
 
     use base32::Alphabet;
-    use codeplan_common::error::AppError;
     use totp_rs::{Algorithm, TOTP};
 
     use crate::service::AuthService;

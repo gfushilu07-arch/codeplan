@@ -11,7 +11,7 @@
 | 阶段 | 任务数 | 已完成 | 进行中 | 状态 |
 |---|---|---|---|---|
 | 阶段 0 · 工程基建 | 7 | 7 | 0 | ✅ 完成 |
-| 批次一 · 基座 | 20 | 3 | 0 | 🔄 进行中 |
+| 批次一 · 基座 | 20 | 4 | 0 | 🔄 进行中 |
 | 批次二 · 协作 | 15 | 0 | 0 | ⬜ 未开始 |
 | 批次三 · 流水线 | 18 | 0 | 0 | ⬜ 未开始 |
 | 批次四 · 发布与智能 | 18 | 0 | 0 | ⬜ 未开始 |
@@ -45,7 +45,11 @@
   - TOTP:setup(base32 密钥 + otpauth URL)→ enable(验证码确认)→ 登录双阶段(票据 5 分钟换会话)→ disable;±1 周期容差
   - OIDC:环境变量配置化启用(未配置 404),state=签名 JWT 内含 nonce,openidconnect 4 异步模型(泛型 AsyncHttpClient),按邮箱 JIT 开通,成功后 302 回前端
   - 端到端 8 项全过(直连登录/setup/enable/二次验证/关闭/OIDC 禁用分支);迁移 0002 向后兼容
-- [ ] **T-104** RBAC:系统/项目/自定义角色模型 + Authz 实现 + axum 权限中间件 · [ORG-03] · M
+- [x] **T-104** RBAC:系统/项目/自定义角色模型 + Authz 实现 + axum 权限中间件 · [ORG-03] · M ✅ 2026-10-09
+  - RbacService 实现 kernel::Authz(平台管理员直通;资源角色 read⊂write⊂admin);ensure() 辅助即权限中间件模式
+  - grant/revoke/members/my-role 四端点(管理员校验后操作,角色层级判定)
+  - 迁移 0003(org_resource_role);6 个单测 + 端到端 7 项(授予/升级/members/my-role/非法角色 400/撤销)
+  - 简化记录:自定义角色引擎延后至项目域需要时引入(当前资源角色三档已覆盖 RBAC 闭环)
 - [ ] **T-105** LDAP/AD 组织架构与登录对接(ldap3,定时同步) · [ORG-01] · M
 - [ ] **T-106** 审计:AuditSink 实现(全操作埋点)+ 审计记录查询 API · [ORG-05] · M
 
@@ -188,3 +192,4 @@
 | 2026-10-09 | T-101 | common(AppError/ApiResponse/Page/ID 宏/time/axum 适配)+ kernel(ID/CurrentUser/Authz/AuditSink/IdentityLookup)全部带单测;testkit 归入 kernel::testkit |
 | 2026-10-09 | T-102 | identity 域落地(domain/infra/service/api 四层);端到端:登录→JWT→鉴权→401 错误码;架构修正:身份域独立为 L3 crate(原计划在 kernel,违反 kernel 禁域逻辑铁律) |
 | 2026-10-09 | T-103 | TOTP 双阶段登录 + OIDC 配置化 SSO(JIT 开通);python 脚本端到端 8 项全过;openidconnect 4 异步 API(泛型 AsyncHttpClient/端点状态机)踩平 |
+| 2026-10-09 | T-104 | RBAC:Authz 落地 + 资源角色 grant/revoke/members/my-role;端到端 7 项全过;自定义角色引擎按需延后 |
