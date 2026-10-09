@@ -8,6 +8,9 @@ edition = "2024"
 license = "Apache-2.0"
 repository = "https://example.internal/codeplan/codeplan"
 
+[workspace.dependencies]
+toml = "0.9"
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 missing_docs = "warn"

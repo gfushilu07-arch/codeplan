@@ -10,7 +10,7 @@
 
 | 阶段 | 任务数 | 已完成 | 进行中 | 状态 |
 |---|---|---|---|---|
-| 阶段 0 · 工程基建 | 7 | 2 | 0 | 🔄 进行中 |
+| 阶段 0 · 工程基建 | 7 | 3 | 0 | 🔄 进行中 |
 | 批次一 · 基座 | 20 | 0 | 0 | ⬜ 未开始 |
 | 批次二 · 协作 | 15 | 0 | 0 | ⬜ 未开始 |
 | 批次三 · 流水线 | 18 | 0 | 0 | ⬜ 未开始 |
@@ -25,7 +25,7 @@
 
 - [x] **T-001** 仓库初始化:git 仓库、根目录骨架(按 ARCHITECTURE.md)、README、Conventional Commits/PR 模板 · S ✅ 2026-10-09
 - [x] **T-002** Rust workspace 骨架:19 个 crate 空壳 + xtask + workspace 配置 + clippy/rustfmt 全开 · M ✅ 2026-10-09(cargo check 全绿,rustc 1.99)
-- [ ] **T-003** xtask:`lint-deps`(crate 依赖白名单检查)+ `sync-rules`(AGENTS.md → cursor/copilot/claude 指针) · M
+- [x] **T-003** xtask:`lint-deps`(crate 依赖白名单检查)+ `sync-rules`(AGENTS.md → cursor/copilot/claude 指针) · M ✅ 2026-10-09(20 crate 通过;违规注入自检 exit=1)
 - [ ] **T-004** CI:后端(clippy/test/lint-deps/cargo-deny)+ 前端(lint/test/tsc strict)+ OpenAPI diff 检查 · M
 - [ ] **T-005** 前端 monorepo 骨架:pnpm + Turborepo + Vite + apps/main + packages/features 空壳 + tooling 共享配置 · M
 - [ ] **T-006** 本地开发环境:`deploy/docker-compose.yml`(PG/Redis/NATS/MinIO/Nginx)+ 种子数据脚本 · M
@@ -177,3 +177,4 @@
 | 2026-10-09 | — | 任务清单创建,共 78 项,全部未开始 |
 | 2026-10-09 | T-001 | git init(main)+ README + .gitignore + PR 模板;Rust 工具链安装中 |
 | 2026-10-09 | T-002 | workspace 19 crate 四层骨架 + xtask 壳;cargo check 全绿(实际 19 crate,较计划 +2:notify/agent 独立) |
+| 2026-10-09 | T-003 | lint-deps 白名单检查(含违规注入自检)+ sync-rules 生成 5 个工具规则文件 |
