@@ -39,6 +39,52 @@ pub enum ResourceRef {
     App(AppId),
 }
 
+/// 资源定位(HTTP 边界友好:kind 字符串 + UUID)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResourceLocator {
+    /// 平台级。
+    System,
+    /// 项目。
+    Project(uuid::Uuid),
+    /// 仓库。
+    Repo(uuid::Uuid),
+    /// 应用。
+    App(uuid::Uuid),
+}
+
+impl ResourceLocator {
+    /// 存储层 kind 字符串(与资源角色表一致)。
+    #[must_use]
+    pub fn kind_str(&self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::Project(_) => "project",
+            Self::Repo(_) => "repo",
+            Self::App(_) => "app",
+        }
+    }
+
+    /// 资源 ID(System 为 `None`)。
+    #[must_use]
+    pub fn id(&self) -> Option<uuid::Uuid> {
+        match self {
+            Self::System => None,
+            Self::Project(id) | Self::Repo(id) | Self::App(id) => Some(*id),
+        }
+    }
+
+    /// 转换为资源引用。
+    #[must_use]
+    pub fn to_ref(&self) -> ResourceRef {
+        match self {
+            Self::System => ResourceRef::System,
+            Self::Project(id) => ResourceRef::Project(crate::ids::ProjectId::from_uuid(*id)),
+            Self::Repo(id) => ResourceRef::Repo(crate::ids::RepoId::from_uuid(*id)),
+            Self::App(id) => ResourceRef::App(crate::ids::AppId::from_uuid(*id)),
+        }
+    }
+}
+
 impl ResourceRef {
     /// 资源种类。
     #[must_use]

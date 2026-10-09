@@ -114,6 +114,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let oidc = codeplan_identity::oidc::OidcConfig::from_env()
         .map(|cfg| Arc::new(codeplan_identity::oidc::OidcCtx::new(cfg)));
+
     // 事件总线(T-110):publish → outbox,中继器转发 NATS
     let nats_url = env_or("CODEPLAN_NATS_URL", "nats://localhost:4223");
     let event_bus: Arc<dyn codeplan_kernel::events::EventBus> =
@@ -130,6 +131,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    // project.created → identity 授予创建者 admin(T-111 闭环)
+    if let Err(e) =
+        codeplan_identity::listen::spawn_project_created_grant(&nats_url, Arc::clone(&rbac)).await
+    {
+        eprintln!("project.created 监听器启动失败: {e}");
+    }
+
+    // 项目管理域(T-111)
+    let project_svc = Arc::new(codeplan_project::service::ProjectService::new(
+        Arc::new(codeplan_project::infra::PgProjectRepository::new(
+            pool.clone(),
+        )),
+        Arc::new(codeplan_project::infra::PgWorkItemRepository::new(
+            pool.clone(),
+        )),
+        Arc::clone(&rbac) as Arc<dyn codeplan_kernel::authz::Authz>,
+        Arc::clone(&event_bus),
+    ));
+    let project_state = codeplan_project::api::ProjectState {
+        svc: project_svc,
+        authn: Arc::clone(&auth) as Arc<dyn codeplan_kernel::authn::TokenAuthenticator>,
+    };
+
     let state = codeplan_identity::api::AuthState {
         auth,
         oidc,
@@ -139,14 +163,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         event_bus,
     };
 
-    let mut app = Router::new()
+    let mut app: Router = Router::new()
         .route("/api/health", get(health))
         .route("/api/docs/openapi.json", get(openapi_json))
-        .merge(codeplan_identity::api::routes());
+        .merge(codeplan_identity::api::routes().with_state(state.clone()));
     if state.oidc.is_some() {
-        app = app.merge(codeplan_identity::oidc::routes());
+        app = app.merge(codeplan_identity::oidc::routes().with_state(state.clone()));
     }
-    let app = app.with_state(state);
+    app = app.merge(codeplan_project::api::routes(project_state.clone()).with_state(project_state));
+    let app = app;
 
     let addr = env_or("CODEPLAN_ADDR", "0.0.0.0:8080");
     let listener = tokio::net::TcpListener::bind(&addr).await?;

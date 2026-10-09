@@ -11,6 +11,7 @@ repository = "https://example.internal/codeplan/codeplan"
 [workspace.dependencies]
 argon2 = "0.6"
 async-nats = "0.40"
+futures-util = "0.3"
 async-trait = "0.1"
 axum = "0.8"
 base32 = "0.5"
@@ -32,6 +33,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 codeplan-common = { path = "crates/common" }
 codeplan-eventbus = { path = "crates/eventbus" }
 codeplan-identity = { path = "crates/identity" }
+codeplan-project = { path = "crates/project" }
 codeplan-kernel = { path = "crates/kernel" }
 
 [workspace.lints.rust]

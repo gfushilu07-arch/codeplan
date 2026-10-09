@@ -11,7 +11,7 @@
 | 阶段 | 任务数 | 已完成 | 进行中 | 状态 |
 |---|---|---|---|---|
 | 阶段 0 · 工程基建 | 7 | 7 | 0 | ✅ 完成 |
-| 批次一 · 基座 | 20 | 7 | 0 | 🔄 进行中 |
+| 批次一 · 基座 | 20 | 8 | 0 | 🔄 进行中 |
 | 批次二 · 协作 | 15 | 0 | 0 | ⬜ 未开始 |
 | 批次三 · 流水线 | 18 | 0 | 0 | ⬜ 未开始 |
 | 批次四 · 发布与智能 | 18 | 0 | 0 | ⬜ 未开始 |
@@ -65,7 +65,13 @@
   - OutboxEventBus 实现 kernel::EventBus(publish=追加 outbox);PgOutboxStore(append/fetch/mark)
   - 中继器 2s 轮询 → NATS 主题 codeplan.events.<type> → 标记 published;失败仅告警下轮重试
   - e2e:outbox 直插事件 → 中继转发并标记(published_at=t);workitem.*/member.* 事件类型随 T-111 域落地时在 kernel::events 定义
-- [ ] **T-111** project 域:工作项模型(多类型/自定义字段 JSONB)+ 状态机引擎(流转/权限/校验) · [PM-01,02] · L
+- [x] **T-111** project 域:工作项模型(多类型/自定义字段 JSONB)+ 状态机引擎(流转/权限/校验) · [PM-01,02] · L ✅ 2026-10-09
+  - 新增 L3 域 crate:codeplan-project(domain/infra/service/api/workflow 五模块)
+  - 状态机引擎:内置工作流(story/task/todo→in_progress→in_review→done;bug 含回归回退)+ 项目级 JSON 配置覆盖(proj_workflow 表)
+  - 工作项:项目内编号(advisory 锁防并发)、优先级、经办人/报告人、自定义字段(JSONB)
+  - 事件闭环:project.created → identity 监听自动授予创建者 admin(修复信封嵌套取值);workitem.created/status_changed 入 outbox
+  - 架构:kernel::TokenAuthenticator 契约 + 认证中间件(project 域不依赖 identity);ResourceLocator 上移 kernel
+  - e2e 8 项全过:建项目→自动授权→建工作项→非法流转 409→合法流转→列表过滤→按编号取项→事件落 outbox
 - [ ] **T-112** 迭代 + 里程碑:规划/容量/进度汇总 · [PM-03,04] · M
 - [ ] **T-113** 多视图 API:看板(列配置/拖拽排序)/列表(筛选批量)/树形(需求分解) · [PM-05] · M
 - [ ] **T-114** 缺陷跟踪类型特化(严重程度/复现步骤/回归) · [PM-08] · S
@@ -205,3 +211,4 @@
 | 2026-10-09 | T-105 | LDAP 目录抽象(生产 ldap3/测试内存双实现)+ 登录回退 JIT + 定时/手动同步;真实 AD 联调留企业环境 |
 | 2026-10-09 | T-106 | org_audit_log + PgAuditSink + 五类埋点 + 管理端查询 API;端到端验证 auth.login/rbac.granted 可查 |
 | 2026-10-09 | T-110 | outbox 表 + OutboxEventBus + 中继器(2s 轮询→NATS→标记);e2e 直插事件验证转发;server 已接线 event_bus |
+| 2026-10-09 | T-111 | project 域落地:状态机引擎/工作项/事件闭环(project.created→自动授权);kernel::TokenAuthenticator 契约;ResourceLocator 上移 kernel;e2e 8 项全过 |

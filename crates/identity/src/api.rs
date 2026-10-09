@@ -358,7 +358,7 @@ async fn rbac_grant(
     State(state): State<AuthState>,
     Json(req): Json<RbacGrantRequest>,
 ) -> Result<Json<ApiResponse<()>>, AppError> {
-    let resource = crate::rbac::ResourceLocator::parse(&req.resource_kind, &req.resource_id)?;
+    let resource = crate::rbac::parse_locator(&req.resource_kind, &req.resource_id)?;
     let role = parse_role(&req.role)?;
     state
         .rbac
@@ -383,7 +383,7 @@ async fn rbac_revoke(
     State(state): State<AuthState>,
     Json(req): Json<RbacRevokeRequest>,
 ) -> Result<Json<ApiResponse<()>>, AppError> {
-    let resource = crate::rbac::ResourceLocator::parse(&req.resource_kind, &req.resource_id)?;
+    let resource = crate::rbac::parse_locator(&req.resource_kind, &req.resource_id)?;
     state.rbac.revoke(&user, resource, &req.username).await?;
     Ok(Json(ApiResponse {
         code: "OK".to_owned(),
@@ -413,7 +413,7 @@ async fn rbac_members(
     State(state): State<AuthState>,
     axum::extract::Query(q): axum::extract::Query<RbacResourceQuery>,
 ) -> Result<Json<ApiResponse<Vec<RbacMemberResponse>>>, AppError> {
-    let resource = crate::rbac::ResourceLocator::parse(&q.kind, &q.id)?;
+    let resource = crate::rbac::parse_locator(&q.kind, &q.id)?;
     let members = state.rbac.members(&user, resource).await?;
     Ok(Json(ApiResponse::ok(
         members
@@ -440,7 +440,7 @@ async fn rbac_my_role(
     State(state): State<AuthState>,
     axum::extract::Query(q): axum::extract::Query<RbacResourceQuery>,
 ) -> Result<Json<ApiResponse<MyRoleResponse>>, AppError> {
-    let resource = crate::rbac::ResourceLocator::parse(&q.kind, &q.id)?;
+    let resource = crate::rbac::parse_locator(&q.kind, &q.id)?;
     let role = state.rbac.my_role(&user, resource).await?;
     Ok(Json(ApiResponse::ok(MyRoleResponse {
         role: role.map(|r| r.as_str().to_owned()),

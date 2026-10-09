@@ -37,6 +37,7 @@ const L4: &[&str] = &[
     "ai",
     "identity",
     "eventbus",
+    "project",
 ];
 
 /// 目录名 → 允许依赖的内部 crate 目录名列表。

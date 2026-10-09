@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use codeplan_common::error::AppError;
-use codeplan_kernel::authz::{Action, Authz, ResourceRef};
+use codeplan_kernel::authz::{Action, Authz, ResourceLocator, ResourceRef};
 use codeplan_kernel::identity::CurrentUser;
 use codeplan_kernel::ids::UserId;
 
@@ -23,66 +23,18 @@ pub struct RbacService {
     audit: Option<Arc<dyn codeplan_kernel::audit::AuditSink>>,
 }
 
-/// 资源定位(与 kernel::ResourceRef 对应,但用字符串 ID 便于 HTTP 边界传输)。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ResourceLocator {
-    /// 平台级。
-    System,
-    /// 项目(按 ID)。
-    Project(uuid::Uuid),
-    /// 仓库(按 ID)。
-    Repo(uuid::Uuid),
-    /// 应用(按 ID)。
-    App(uuid::Uuid),
-}
-
-impl ResourceLocator {
-    /// 存储中的 kind 字符串。
-    #[must_use]
-    pub fn kind_str(&self) -> &'static str {
-        match self {
-            Self::System => "system",
-            Self::Project(_) => "project",
-            Self::Repo(_) => "repo",
-            Self::App(_) => "app",
-        }
-    }
-
-    /// 资源 ID(System 为 None)。
-    #[must_use]
-    pub fn id(&self) -> Option<uuid::Uuid> {
-        match self {
-            Self::System => None,
-            Self::Project(id) | Self::Repo(id) | Self::App(id) => Some(*id),
-        }
-    }
-
-    /// 转换为 kernel 资源引用。
-    #[must_use]
-    pub fn to_ref(&self) -> ResourceRef {
-        match self {
-            Self::System => ResourceRef::System,
-            Self::Project(id) => {
-                ResourceRef::Project(codeplan_kernel::ids::ProjectId::from_uuid(*id))
-            }
-            Self::Repo(id) => ResourceRef::Repo(codeplan_kernel::ids::RepoId::from_uuid(*id)),
-            Self::App(id) => ResourceRef::App(codeplan_kernel::ids::AppId::from_uuid(*id)),
-        }
-    }
-
-    /// 从 kind 字符串 + ID 解析。
-    ///
-    /// # Errors
-    /// kind 非法或 ID 非法 UUID 返回 `ORG-400`。
-    pub fn parse(kind: &str, id: &str) -> Result<Self, AppError> {
-        let bad = || AppError::invalid(DOMAIN_CODE, format!("非法资源定位:{kind}/{id}"));
-        match kind {
-            "system" => Ok(Self::System),
-            "project" => Ok(Self::Project(id.parse().map_err(|_| bad())?)),
-            "repo" => Ok(Self::Repo(id.parse().map_err(|_| bad())?)),
-            "app" => Ok(Self::App(id.parse().map_err(|_| bad())?)),
-            _ => Err(bad()),
-        }
+/// 从 kind/ID 字符串解析资源定位。
+///
+/// # Errors
+/// kind 非法或 ID 非法 UUID 返回 `ORG-400`。
+pub fn parse_locator(kind: &str, id: &str) -> Result<ResourceLocator, AppError> {
+    let bad = || AppError::invalid(DOMAIN_CODE, format!("非法资源定位:{kind}/{id}"));
+    match kind {
+        "system" => Ok(ResourceLocator::System),
+        "project" => Ok(ResourceLocator::Project(id.parse().map_err(|_| bad())?)),
+        "repo" => Ok(ResourceLocator::Repo(id.parse().map_err(|_| bad())?)),
+        "app" => Ok(ResourceLocator::App(id.parse().map_err(|_| bad())?)),
+        _ => Err(bad()),
     }
 }
 
@@ -298,7 +250,7 @@ mod tests {
     use codeplan_kernel::ids::UserId;
 
     use crate::domain::ResourceRole;
-    use crate::rbac::{RbacService, ResourceLocator};
+    use crate::rbac::{RbacService, parse_locator};
     use crate::test_support::{InMemoryRbacStore, InMemoryUserRepository};
 
     async fn setup() -> (RbacService, UserId, UserId, UserId, uuid::Uuid) {
@@ -377,9 +329,9 @@ mod tests {
     #[tokio::test]
     async fn locator_parse_and_role_of() {
         let (svc, alice, _bob, _root, rid) = setup().await;
-        let loc = ResourceLocator::parse("project", &rid.to_string()).expect("合法");
+        let loc = parse_locator("project", &rid.to_string()).expect("合法");
         assert_eq!(loc.kind_str(), "project");
-        assert!(ResourceLocator::parse("nope", &rid.to_string()).is_err());
+        assert!(parse_locator("nope", &rid.to_string()).is_err());
         assert!(
             svc.my_role(
                 &codeplan_kernel::identity::CurrentUser::new(alice, "a", "a@x"),

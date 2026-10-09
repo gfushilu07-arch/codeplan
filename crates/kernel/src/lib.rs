@@ -4,6 +4,7 @@
 //! 全平台唯一事实来源:改这里 = 破坏性变更,需版本化并评审(见 AGENTS.md 铁律)。
 
 pub mod audit;
+pub mod authn;
 pub mod authz;
 pub mod events;
 pub mod identity;

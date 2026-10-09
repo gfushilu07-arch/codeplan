@@ -457,12 +457,14 @@ name = "codeplan-identity"
 version = "0.1.0"
 dependencies = [
  "argon2",
+ "async-nats",
  "async-trait",
  "axum",
  "base32",
  "chrono",
  "codeplan-common",
  "codeplan-kernel",
+ "futures-util",
  "jsonwebtoken",
  "ldap3",
  "openidconnect",
@@ -500,6 +502,19 @@ version = "0.1.0"
 [[package]]
 name = "codeplan-project"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "chrono",
+ "codeplan-common",
+ "codeplan-kernel",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "utoipa",
+ "uuid",
+]
 
 [[package]]
 name = "codeplan-release"
@@ -517,6 +532,7 @@ dependencies = [
  "codeplan-eventbus",
  "codeplan-identity",
  "codeplan-kernel",
+ "codeplan-project",
  "serde",
  "serde_json",
  "sqlx",

@@ -501,6 +501,15 @@ pub(crate) fn hash_password(password: &str) -> Result<String, AppError> {
     Ok(hash.to_string())
 }
 
+#[async_trait::async_trait]
+impl codeplan_kernel::authn::TokenAuthenticator for AuthService {
+    async fn verify(&self, token: &str) -> Result<CurrentUser, String> {
+        self.verify_token(token)
+            .await
+            .map_err(|e| e.message().to_owned())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
