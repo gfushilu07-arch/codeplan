@@ -2,7 +2,36 @@
 
 use std::sync::Mutex;
 
+use crate::audit::{AuditEvent, AuditSink};
 use crate::events::{EventBus, EventEnvelope};
+
+/// 内存审计槽:收集审计事件供测试断言。
+#[derive(Default)]
+pub struct InMemoryAuditSink {
+    records: Mutex<Vec<AuditEvent>>,
+}
+
+impl InMemoryAuditSink {
+    /// 创建空审计槽。
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 已记录审计事件快照。
+    #[must_use]
+    pub fn records(&self) -> Vec<AuditEvent> {
+        self.records.lock().expect("审计锁中毒").clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl AuditSink for InMemoryAuditSink {
+    async fn record(&self, event: AuditEvent) -> Result<(), String> {
+        self.records.lock().expect("审计锁中毒").push(event);
+        Ok(())
+    }
+}
 
 /// 内存事件总线:收集所有已发布事件,供测试断言。
 #[derive(Default)]

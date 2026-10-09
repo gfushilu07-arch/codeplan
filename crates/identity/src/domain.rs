@@ -15,6 +15,40 @@ impl From<OrgId> for codeplan_kernel::ids::OrgId {
     }
 }
 
+/// 用户来源。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UserSource {
+    /// 本地账号。
+    Local,
+    /// LDAP/AD 同步。
+    Ldap,
+    /// OIDC JIT 开通。
+    Oidc,
+}
+
+impl UserSource {
+    /// 数据库存储值。
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::Ldap => "ldap",
+            Self::Oidc => "oidc",
+        }
+    }
+
+    /// 从数据库值解析。
+    #[must_use]
+    pub fn from_str_opt(value: &str) -> Option<Self> {
+        match value {
+            "local" => Some(Self::Local),
+            "ldap" => Some(Self::Ldap),
+            "oidc" => Some(Self::Oidc),
+            _ => None,
+        }
+    }
+}
+
 /// 用户状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UserStatus {
@@ -60,6 +94,8 @@ pub struct User {
     pub status: UserStatus,
     /// 本地账号密码哈希(argon2;LDAP 用户为空)。
     pub password_hash: Option<String>,
+    /// 用户来源。
+    pub source: UserSource,
     /// TOTP 密钥(base32;setup 后 enable 前为待确认状态)。
     pub totp_secret: Option<String>,
     /// TOTP 是否已启用。
@@ -85,6 +121,8 @@ pub struct NewUser {
     pub password: Option<String>,
     /// 是否平台管理员。
     pub is_platform_admin: bool,
+    /// 来源(local/ldap/oidc)。
+    pub source: UserSource,
 }
 
 /// 用户仓储抽象。
@@ -138,6 +176,17 @@ pub trait UserRepository: Send + Sync {
         id: UserId,
         secret: Option<String>,
         enabled: bool,
+    ) -> Result<(), codeplan_common::error::AppError>;
+
+    /// LDAP 同步 upsert:按用户名插入或更新邮箱/显示名(source=ldap,无本地密码)。
+    ///
+    /// # Errors
+    /// 存储故障。
+    async fn upsert_ldap_user(
+        &self,
+        username: &str,
+        email: &str,
+        display_name: &str,
     ) -> Result<(), codeplan_common::error::AppError>;
 }
 

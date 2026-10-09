@@ -40,6 +40,7 @@ impl InMemoryUserRepository {
                 UserStatus::Active
             },
             password_hash: password.map(|p| crate::service::hash_password(p).expect("哈希失败")),
+            source: crate::domain::UserSource::Local,
             totp_secret: None,
             totp_enabled: false,
             is_platform_admin: admin,
@@ -76,6 +77,7 @@ impl UserRepository for InMemoryUserRepository {
                 .as_deref()
                 .map(crate::service::hash_password)
                 .transpose()?,
+            source: user.source,
             totp_secret: None,
             totp_enabled: false,
             is_platform_admin: user.is_platform_admin,
@@ -118,6 +120,37 @@ impl UserRepository for InMemoryUserRepository {
             .iter()
             .find(|u| u.email == email)
             .cloned())
+    }
+
+    async fn upsert_ldap_user(
+        &self,
+        username: &str,
+        email: &str,
+        display_name: &str,
+    ) -> Result<(), AppError> {
+        let mut users = self.users.lock().expect("锁");
+        if let Some(u) = users.iter_mut().find(|u| u.username == username) {
+            u.email = email.to_owned();
+            u.display_name = display_name.to_owned();
+            u.source = crate::domain::UserSource::Ldap;
+            u.updated_at = codeplan_common::time::now();
+        } else {
+            users.push(User {
+                id: UserId::generate(),
+                username: username.to_owned(),
+                email: email.to_owned(),
+                display_name: display_name.to_owned(),
+                status: UserStatus::Active,
+                password_hash: None,
+                source: crate::domain::UserSource::Ldap,
+                totp_secret: None,
+                totp_enabled: false,
+                is_platform_admin: false,
+                created_at: codeplan_common::time::now(),
+                updated_at: codeplan_common::time::now(),
+            });
+        }
+        Ok(())
     }
 
     async fn save_totp(

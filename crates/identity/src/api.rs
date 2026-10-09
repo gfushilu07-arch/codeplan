@@ -22,6 +22,10 @@ pub struct AuthState {
     pub oidc: Option<Arc<crate::oidc::OidcCtx>>,
     /// RBAC 服务。
     pub rbac: Arc<crate::rbac::RbacService>,
+    /// LDAP 目录(未启用为 None)。
+    pub ldap: Option<Arc<dyn crate::ldap::LdapDirectory>>,
+    /// 审计查询(PG 实现;记录写入经服务内嵌槽)。
+    pub audit: Arc<crate::infra::PgAuditSink>,
 }
 
 /// 身份域路由(挂载到 `/api`)。
@@ -38,6 +42,8 @@ pub fn routes() -> Router<AuthState> {
         .route("/api/rbac/revoke", axum::routing::post(rbac_revoke))
         .route("/api/rbac/members", axum::routing::get(rbac_members))
         .route("/api/rbac/my-role", axum::routing::get(rbac_my_role))
+        .route("/api/admin/ldap/sync", axum::routing::post(ldap_sync))
+        .route("/api/admin/audit", axum::routing::get(audit_recent))
 }
 
 /// 登录请求。
@@ -437,4 +443,96 @@ async fn rbac_my_role(
     Ok(Json(ApiResponse::ok(MyRoleResponse {
         role: role.map(|r| r.as_str().to_owned()),
     })))
+}
+
+/// LDAP 手动同步响应。
+#[derive(Debug, Serialize, ToSchema)]
+pub struct LdapSyncResponse {
+    /// 同步条数。
+    pub synced: usize,
+}
+
+/// 手动触发 LDAP 同步(平台管理员)。
+#[utoipa::path(post, path = "/api/admin/ldap/sync", responses((status = 200, body = LdapSyncResponse)))]
+async fn ldap_sync(
+    user: Result<CurrentUser, AppError>,
+    State(state): State<AuthState>,
+) -> Result<Json<ApiResponse<LdapSyncResponse>>, AppError> {
+    let user = user?;
+    if !user.is_platform_admin {
+        return Err(AppError::forbidden(DOMAIN_CODE, "仅平台管理员可触发同步"));
+    }
+    let synced = state.auth.sync_ldap_users().await?;
+    Ok(Json(ApiResponse::ok(LdapSyncResponse { synced })))
+}
+
+/// 审计记录。
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AuditRecordResponse {
+    /// 记录 ID。
+    pub id: String,
+    /// 操作者(可为空)。
+    pub actor: Option<String>,
+    /// 动作。
+    pub action: String,
+    /// 资源种类。
+    pub resource_kind: Option<String>,
+    /// 资源 ID。
+    pub resource_id: Option<String>,
+    /// 附加细节。
+    pub detail: serde_json::Value,
+    /// 时间(RFC 3339)。
+    pub at: String,
+}
+
+/// 审计查询参数。
+#[derive(Debug, Deserialize, IntoParams)]
+pub struct AuditQuery {
+    /// 返回条数上限(1~500,默认 100)。
+    pub limit: Option<i64>,
+}
+
+/// 最近审计记录(平台管理员)。
+#[utoipa::path(
+    get,
+    path = "/api/admin/audit",
+    params(AuditQuery),
+    responses((status = 200, body = AuditRecordResponse))
+)]
+async fn audit_recent(
+    user: Result<CurrentUser, AppError>,
+    State(state): State<AuthState>,
+    axum::extract::Query(q): axum::extract::Query<AuditQuery>,
+) -> Result<Json<ApiResponse<Vec<AuditRecordResponse>>>, AppError> {
+    let user = user?;
+    if !user.is_platform_admin {
+        return Err(AppError::forbidden(DOMAIN_CODE, "仅平台管理员可查询审计"));
+    }
+    let records = state.audit.recent(q.limit.unwrap_or(100)).await?;
+    Ok(Json(ApiResponse::ok(
+        records
+            .into_iter()
+            .map(|r| AuditRecordResponse {
+                id: r.id.to_string(),
+                actor: r.actor.map(|u| u.as_uuid().to_string()),
+                action: r.action,
+                resource_kind: match &r.resource {
+                    codeplan_kernel::authz::ResourceRef::System => Some("system".to_owned()),
+                    codeplan_kernel::authz::ResourceRef::Project(_) => Some("project".to_owned()),
+                    codeplan_kernel::authz::ResourceRef::Repo(_) => Some("repo".to_owned()),
+                    codeplan_kernel::authz::ResourceRef::App(_) => Some("app".to_owned()),
+                },
+                resource_id: match &r.resource {
+                    codeplan_kernel::authz::ResourceRef::Project(id) => {
+                        Some(id.as_uuid().to_string())
+                    }
+                    codeplan_kernel::authz::ResourceRef::Repo(id) => Some(id.as_uuid().to_string()),
+                    codeplan_kernel::authz::ResourceRef::App(id) => Some(id.as_uuid().to_string()),
+                    codeplan_kernel::authz::ResourceRef::System => None,
+                },
+                detail: r.detail,
+                at: chrono::DateTime::to_rfc3339(&r.at),
+            })
+            .collect(),
+    )))
 }

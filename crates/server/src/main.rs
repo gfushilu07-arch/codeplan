@@ -63,14 +63,49 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         codeplan_identity::infra::PgUserRepository::new(pool.clone()),
     );
     let jwt_secret = env_or("CODEPLAN_JWT_SECRET", "dev-secret-do-not-use-in-prod");
-    let auth = Arc::new(codeplan_identity::service::AuthService::new(
-        Arc::clone(&users),
-        &jwt_secret,
-    ));
-    let rbac = Arc::new(codeplan_identity::rbac::RbacService::new(
-        Arc::new(codeplan_identity::infra::PgRbacStore::new(pool.clone())),
-        users,
-    ));
+
+    // 审计槽(PG;T-106)
+    let audit_sink: Arc<dyn codeplan_kernel::audit::AuditSink> =
+        Arc::new(codeplan_identity::infra::PgAuditSink::new(pool.clone()));
+
+    // LDAP(可选):登录回退 + 定时同步(T-105)
+    let directory: Option<Arc<dyn codeplan_identity::ldap::LdapDirectory>> =
+        codeplan_identity::ldap::LdapConfig::from_env()
+            .map(|cfg| Arc::new(codeplan_identity::ldap::LdapDirectoryImpl::new(cfg)) as Arc<_>);
+
+    let mut auth = codeplan_identity::service::AuthService::new(Arc::clone(&users), &jwt_secret);
+    if let Some(dir) = &directory {
+        auth = auth.with_directory(Arc::clone(dir));
+    }
+    auth = auth.with_audit(Arc::clone(&audit_sink));
+    let auth = Arc::new(auth);
+
+    if let Some(dir) = &directory {
+        let hours: u64 = env_or("CODEPLAN_LDAP_SYNC_HOURS", "6").parse().unwrap_or(6);
+        if hours > 0 {
+            let dir = Arc::clone(dir);
+            tokio::spawn(async move {
+                let mut ticker =
+                    tokio::time::interval(std::time::Duration::from_secs(hours * 3600));
+                ticker.tick().await; // 启动即同步一次
+                loop {
+                    match dir.list_users().await {
+                        Ok(list) => println!("LDAP 目录用户 {} 个(同步周期 {hours}h)", list.len()),
+                        Err(e) => eprintln!("LDAP 同步失败: {e}"),
+                    }
+                    ticker.tick().await;
+                }
+            });
+        }
+    }
+
+    let rbac = Arc::new(
+        codeplan_identity::rbac::RbacService::new(
+            Arc::new(codeplan_identity::infra::PgRbacStore::new(pool.clone())),
+            Arc::clone(&users),
+        )
+        .with_audit(Arc::clone(&audit_sink)),
+    );
     auth.bootstrap_admin_if_empty(&env_or(
         "CODEPLAN_BOOTSTRAP_ADMIN_PASSWORD",
         "codeplan-admin",
@@ -79,7 +114,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let oidc = codeplan_identity::oidc::OidcConfig::from_env()
         .map(|cfg| Arc::new(codeplan_identity::oidc::OidcCtx::new(cfg)));
-    let state = codeplan_identity::api::AuthState { auth, oidc, rbac };
+    let state = codeplan_identity::api::AuthState {
+        auth,
+        oidc,
+        rbac,
+        ldap: directory,
+        audit: Arc::new(codeplan_identity::infra::PgAuditSink::new(pool.clone())),
+    };
 
     let mut app = Router::new()
         .route("/api/health", get(health))

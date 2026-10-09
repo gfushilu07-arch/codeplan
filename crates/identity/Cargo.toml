@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 argon2 = { workspace = true, features = ["rand_core"] }
 base32.workspace = true
+ldap3.workspace = true
 openidconnect.workspace = true
 totp-rs.workspace = true
 async-trait.workspace = true

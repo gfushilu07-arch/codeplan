@@ -11,7 +11,7 @@
 | 阶段 | 任务数 | 已完成 | 进行中 | 状态 |
 |---|---|---|---|---|
 | 阶段 0 · 工程基建 | 7 | 7 | 0 | ✅ 完成 |
-| 批次一 · 基座 | 20 | 4 | 0 | 🔄 进行中 |
+| 批次一 · 基座 | 20 | 6 | 0 | 🔄 进行中 |
 | 批次二 · 协作 | 15 | 0 | 0 | ⬜ 未开始 |
 | 批次三 · 流水线 | 18 | 0 | 0 | ⬜ 未开始 |
 | 批次四 · 发布与智能 | 18 | 0 | 0 | ⬜ 未开始 |
@@ -50,8 +50,14 @@
   - grant/revoke/members/my-role 四端点(管理员校验后操作,角色层级判定)
   - 迁移 0003(org_resource_role);6 个单测 + 端到端 7 项(授予/升级/members/my-role/非法角色 400/撤销)
   - 简化记录:自定义角色引擎延后至项目域需要时引入(当前资源角色三档已覆盖 RBAC 闭环)
-- [ ] **T-105** LDAP/AD 组织架构与登录对接(ldap3,定时同步) · [ORG-01] · M
-- [ ] **T-106** 审计:AuditSink 实现(全操作埋点)+ 审计记录查询 API · [ORG-05] · M
+- [x] **T-105** LDAP/AD 组织架构与登录对接(ldap3,定时同步) · [ORG-01] · M ✅ 2026-10-09
+  - LdapDirectory trait(生产 ldap3 实现 / 测试内存目录);本地无密码或不存在 → 目录认证回退 + JIT upsert(source=ldap)
+  - 定时同步(tokio interval,`CODEPLAN_LDAP_SYNC_HOURS`,0 禁用)+ 平台管理员手动触发路由
+  - 配置全走环境变量(AD 的 sAMAccountName 等属性名可配);e2e:未启用分支 400/回归登录 ✓;真实 AD 联调需企业环境(已留接口)
+- [x] **T-106** 审计:AuditSink 实现(全操作埋点)+ 审计记录查询 API · [ORG-05] · M ✅ 2026-10-09
+  - PgAuditSink(org_audit_log 表,迁移 0004)+ kernel::testkit 内存审计槽
+  - 埋点:登录成功/失败、TOTP 启用/关闭、RBAC 授予/撤销;审计失败不阻断业务
+  - GET /api/admin/audit(平台管理员,limit 1~500);e2e:auth.login 与 rbac.granted 均可查 ✓
 
 ### 事件与项目管理
 
@@ -193,3 +199,5 @@
 | 2026-10-09 | T-102 | identity 域落地(domain/infra/service/api 四层);端到端:登录→JWT→鉴权→401 错误码;架构修正:身份域独立为 L3 crate(原计划在 kernel,违反 kernel 禁域逻辑铁律) |
 | 2026-10-09 | T-103 | TOTP 双阶段登录 + OIDC 配置化 SSO(JIT 开通);python 脚本端到端 8 项全过;openidconnect 4 异步 API(泛型 AsyncHttpClient/端点状态机)踩平 |
 | 2026-10-09 | T-104 | RBAC:Authz 落地 + 资源角色 grant/revoke/members/my-role;端到端 7 项全过;自定义角色引擎按需延后 |
+| 2026-10-09 | T-105 | LDAP 目录抽象(生产 ldap3/测试内存双实现)+ 登录回退 JIT + 定时/手动同步;真实 AD 联调留企业环境 |
+| 2026-10-09 | T-106 | org_audit_log + PgAuditSink + 五类埋点 + 管理端查询 API;端到端验证 auth.login/rbac.granted 可查 |

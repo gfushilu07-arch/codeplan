@@ -5,6 +5,7 @@ use argon2::{Argon2, PasswordHasher, PasswordVerifier};
 use base32::Alphabet;
 use chrono::{Duration, Utc};
 use codeplan_common::error::AppError;
+use codeplan_kernel::audit::AuditSink;
 use codeplan_kernel::identity::CurrentUser;
 use codeplan_kernel::ids::UserId;
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation};
@@ -13,6 +14,7 @@ use totp_rs::{Algorithm, TOTP};
 
 use crate::DOMAIN_CODE;
 use crate::domain::{NewUser, User, UserRepository};
+use crate::ldap::LdapDirectory;
 
 /// 会话有效期(小时)。
 const SESSION_HOURS: i64 = 12;
@@ -77,6 +79,8 @@ pub struct AuthService {
     users: std::sync::Arc<dyn UserRepository>,
     encoding_key: EncodingKey,
     decoding_key: DecodingKey,
+    directory: Option<std::sync::Arc<dyn LdapDirectory>>,
+    audit: Option<std::sync::Arc<dyn AuditSink>>,
 }
 
 impl AuthService {
@@ -87,6 +91,37 @@ impl AuthService {
             users,
             encoding_key: EncodingKey::from_secret(jwt_secret.as_bytes()),
             decoding_key: DecodingKey::from_secret(jwt_secret.as_bytes()),
+            directory: None,
+            audit: None,
+        }
+    }
+
+    /// 挂载 LDAP 目录(启用登录回退与定时同步)。
+    #[must_use]
+    pub fn with_directory(mut self, directory: std::sync::Arc<dyn LdapDirectory>) -> Self {
+        self.directory = Some(directory);
+        self
+    }
+
+    /// 挂载审计槽(登录/TOTP 等关键动作埋点)。
+    #[must_use]
+    pub fn with_audit(mut self, audit: std::sync::Arc<dyn AuditSink>) -> Self {
+        self.audit = Some(audit);
+        self
+    }
+
+    /// 审计埋点(失败不阻断业务)。
+    async fn audit(&self, actor: Option<UserId>, action: &str, detail: serde_json::Value) {
+        if let Some(sink) = &self.audit {
+            let event = codeplan_kernel::audit::AuditEvent::new(
+                actor,
+                action,
+                codeplan_kernel::authz::ResourceRef::System,
+                detail,
+            );
+            if let Err(e) = sink.record(event).await {
+                eprintln!("audit 落盘失败: {e}");
+            }
         }
     }
 
@@ -95,18 +130,77 @@ impl AuthService {
     /// # Errors
     /// 凭据错误返回 `ORG-401`(统一文案,防用户名枚举);账号禁用返回 `ORG-403`。
     pub async fn login(&self, username: &str, password: &str) -> Result<LoginResult, AppError> {
-        let user = self
-            .users
-            .find_by_username(username)
-            .await?
-            .ok_or_else(|| AppError::new(format!("{DOMAIN_CODE}-401"), 401, "用户名或密码错误"))?;
+        let local = self.users.find_by_username(username).await?;
+        let user = match local {
+            // 本地账号且设了密码 → 本地校验
+            Some(u) if u.password_hash.is_some() => {
+                verify_password(&u, password)?;
+                u
+            }
+            // 本地无密码(LDAP 同步账号)或不存在 → 目录认证回退
+            other => {
+                let Some(directory) = &self.directory else {
+                    self.audit(
+                        None,
+                        "auth.login_failed",
+                        serde_json::json!({"username": username, "reason": "no_directory"}),
+                    )
+                    .await;
+                    return Err(AppError::new(
+                        format!("{DOMAIN_CODE}-401"),
+                        401,
+                        "用户名或密码错误",
+                    ));
+                };
+                let ldap_user = match directory.authenticate(username, password).await {
+                    Ok(Some(u)) => u,
+                    Ok(None) => {
+                        self.audit(
+                            None,
+                            "auth.login_failed",
+                            serde_json::json!({"username": username, "reason": "directory_denied"}),
+                        )
+                        .await;
+                        return Err(AppError::new(
+                            format!("{DOMAIN_CODE}-401"),
+                            401,
+                            "用户名或密码错误",
+                        ));
+                    }
+                    Err(e) => return Err(crate::ldap::directory_error(e)),
+                };
+                // 目录通过:绑定到本地账号(存在则取,不存在则 JIT 开通)
+                match other {
+                    Some(u) => u,
+                    None => {
+                        self.users
+                            .upsert_ldap_user(
+                                &ldap_user.username,
+                                &ldap_user.email,
+                                &ldap_user.display_name,
+                            )
+                            .await?;
+                        self.users
+                            .find_by_username(username)
+                            .await?
+                            .ok_or_else(|| AppError::internal(DOMAIN_CODE))?
+                    }
+                }
+            }
+        };
 
-        verify_password(&user, password)?;
         if user.totp_enabled {
             let ticket = self.sign_mfa_ticket(&user.id)?;
             return Ok(LoginResult::TotpRequired { ticket });
         }
-        Ok(LoginResult::Done(self.issue_session(&user)?))
+        let session = self.issue_session(&user)?;
+        self.audit(
+            Some(user.id),
+            "auth.login",
+            serde_json::json!({"username": username, "source": user.source.as_str()}),
+        )
+        .await;
+        Ok(LoginResult::Done(session))
     }
 
     /// 凭 MFA 票据 + TOTP 验证码换取正式会话。
@@ -225,6 +319,7 @@ impl AuthService {
                         display_name: display_name.to_owned(),
                         password: None,
                         is_platform_admin: false,
+                        source: crate::domain::UserSource::Oidc,
                     })
                     .await?
             }
@@ -262,6 +357,27 @@ impl AuthService {
             return Err(AppError::invalid(DOMAIN_CODE, "state 无效或已过期"));
         }
         Ok(claims.sub)
+    }
+
+    /// LDAP 全量同步:目录用户 upsert 进平台(按用户名),返回同步条数。
+    ///
+    /// # Errors
+    /// 目录未启用返回 `ORG-400`;目录故障返回 `ORG-503`。
+    pub async fn sync_ldap_users(&self) -> Result<usize, AppError> {
+        let Some(directory) = &self.directory else {
+            return Err(AppError::invalid(DOMAIN_CODE, "LDAP 未启用"));
+        };
+        let users = directory
+            .list_users()
+            .await
+            .map_err(crate::ldap::directory_error)?;
+        let count = users.len();
+        for u in users {
+            self.users
+                .upsert_ldap_user(&u.username, &u.email, &u.display_name)
+                .await?;
+        }
+        Ok(count)
     }
 
     fn sign_mfa_ticket(&self, user_id: &UserId) -> Result<String, AppError> {
@@ -325,6 +441,7 @@ impl AuthService {
                 display_name: "Administrator".to_owned(),
                 password: Some(password.to_owned()),
                 is_platform_admin: true,
+                source: crate::domain::UserSource::Local,
             })
             .await?;
         Ok(())

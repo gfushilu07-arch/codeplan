@@ -19,6 +19,8 @@ pub struct RbacService {
     pub store: Arc<dyn RbacStore>,
     /// 用户仓储(平台管理员判定 + 用户名解析)。
     users: Arc<dyn UserRepository>,
+    /// 审计槽(可选)。
+    audit: Option<Arc<dyn codeplan_kernel::audit::AuditSink>>,
 }
 
 /// 资源定位(与 kernel::ResourceRef 对应,但用字符串 ID 便于 HTTP 边界传输)。
@@ -88,7 +90,38 @@ impl RbacService {
     /// 构造。
     #[must_use]
     pub fn new(store: Arc<dyn RbacStore>, users: Arc<dyn UserRepository>) -> Self {
-        Self { store, users }
+        Self {
+            store,
+            users,
+            audit: None,
+        }
+    }
+
+    /// 挂载审计槽。
+    #[must_use]
+    pub fn with_audit(mut self, audit: Arc<dyn codeplan_kernel::audit::AuditSink>) -> Self {
+        self.audit = Some(audit);
+        self
+    }
+
+    async fn audit(
+        &self,
+        actor: &CurrentUser,
+        action: &str,
+        resource: &ResourceLocator,
+        detail: serde_json::Value,
+    ) {
+        if let Some(sink) = &self.audit {
+            let event = codeplan_kernel::audit::AuditEvent::new(
+                Some(actor.id),
+                action,
+                resource.to_ref(),
+                detail,
+            );
+            if let Err(e) = sink.record(event).await {
+                eprintln!("audit 落盘失败: {e}");
+            }
+        }
     }
 
     /// 校验用户对资源具备指定动作权限,不具备时返回 `ORG-403`。
@@ -133,7 +166,15 @@ impl RbacService {
         };
         self.store
             .grant(target.id, resource.kind_str(), id, role)
-            .await
+            .await?;
+        self.audit(
+            actor,
+            "rbac.granted",
+            &resource,
+            serde_json::json!({"username": target_username, "role": role.as_str()}),
+        )
+        .await;
+        Ok(())
     }
 
     /// 管理员撤销成员角色。
@@ -155,7 +196,17 @@ impl RbacService {
             .find_by_username(target_username)
             .await?
             .ok_or_else(|| AppError::not_found(DOMAIN_CODE, "目标用户不存在"))?;
-        self.store.revoke(target.id, resource.kind_str(), id).await
+        self.store
+            .revoke(target.id, resource.kind_str(), id)
+            .await?;
+        self.audit(
+            actor,
+            "rbac.revoked",
+            &resource,
+            serde_json::json!({"username": target_username}),
+        )
+        .await;
+        Ok(())
     }
 
     /// 成员列表(需要资源读权限或平台管理员)。
