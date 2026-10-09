@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@codeplan/api-client": "workspace:*",
     "@codeplan/design-tokens": "workspace:*",
     "@codeplan/shared": "workspace:*",
     "@codeplan/ui": "workspace:*",
