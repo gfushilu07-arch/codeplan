@@ -131,6 +131,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    // Wiki 域(T-115)
+    let data_dir = env_or("CODEPLAN_DATA_DIR", "./data");
+    let wiki_store = Arc::new(codeplan_wiki::storage::FsAttachmentStore::new(format!(
+        "{data_dir}/attachments"
+    )));
+    let wiki_state = codeplan_wiki::api::WikiState {
+        svc: Arc::new(codeplan_wiki::service::WikiService::new(
+            Arc::new(codeplan_wiki::infra::PgPageRepository::new(pool.clone())),
+            Arc::new(codeplan_wiki::infra::PgAttachmentRepository::new(
+                pool.clone(),
+            )),
+            Arc::clone(&wiki_store),
+            Arc::clone(&rbac) as Arc<dyn codeplan_kernel::authz::Authz>,
+        )),
+        authn: Arc::clone(&auth) as Arc<dyn codeplan_kernel::authn::TokenAuthenticator>,
+    };
+
     // project.created → identity 授予创建者 admin(T-111 闭环)
     if let Err(e) =
         codeplan_identity::listen::spawn_project_created_grant(&nats_url, Arc::clone(&rbac)).await
@@ -177,7 +194,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         app = app.merge(codeplan_identity::oidc::routes().with_state(state.clone()));
     }
     app = app.merge(codeplan_project::api::routes(project_state.clone()).with_state(project_state));
-    let app = app;
+    app = app.merge(codeplan_wiki::api::routes(wiki_state.clone()).with_state(wiki_state));
 
     let addr = env_or("CODEPLAN_ADDR", "0.0.0.0:8080");
     let listener = tokio::net::TcpListener::bind(&addr).await?;

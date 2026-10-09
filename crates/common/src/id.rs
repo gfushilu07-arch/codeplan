@@ -48,5 +48,25 @@ macro_rules! define_id {
                 Ok(Self(uuid::Uuid::parse_str(value)?))
             }
         }
+
+        impl utoipa::PartialSchema for $name {
+            fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+                utoipa::openapi::schema::Object::builder()
+                    .schema_type(utoipa::openapi::schema::SchemaType::Type(
+                        utoipa::openapi::schema::Type::String,
+                    ))
+                    .into()
+            }
+        }
+
+        impl utoipa::ToSchema for $name {}
+
+        impl std::str::FromStr for $name {
+            type Err = uuid::Error;
+
+            fn from_str(value: &str) -> Result<Self, Self::Err> {
+                Ok(Self(uuid::Uuid::parse_str(value)?))
+            }
+        }
     };
 }

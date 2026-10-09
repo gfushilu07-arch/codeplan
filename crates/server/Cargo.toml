@@ -13,6 +13,7 @@ axum.workspace = true
 codeplan-eventbus.workspace = true
 codeplan-project.workspace = true
 codeplan-identity.workspace = true
+codeplan-wiki.workspace = true
 codeplan-kernel.workspace = true
 serde.workspace = true
 serde_json.workspace = true
