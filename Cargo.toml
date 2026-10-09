@@ -9,18 +9,24 @@ license = "Apache-2.0"
 repository = "https://example.internal/codeplan/codeplan"
 
 [workspace.dependencies]
+argon2 = "0.6"
 async-trait = "0.1"
 axum = "0.8"
 chrono = { version = "0.4", features = ["serde"] }
+jsonwebtoken = { version = "10", features = ["aws_lc_rs"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 thiserror = "2"
 toml = "0.9"
 utoipa = { version = "5", features = ["axum_extras"] }
+rand_core = { version = "0.9", features = ["os"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "migrate", "chrono", "uuid"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 
 codeplan-common = { path = "crates/common" }
+codeplan-identity = { path = "crates/identity" }
+codeplan-kernel = { path = "crates/kernel" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

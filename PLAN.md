@@ -174,7 +174,7 @@
 ┌───────────────────────▼────────────────────────────────────┐
 │                Rust 内核(axum 模块化单体,可多实例)           │
 │                                                            │
-│  identity/rbac/audit │ project(工作项/迭代/看板/测试)│ wiki │
+│  identity(用户/认证/RBAC/审计)│ project(工作项/迭代/看板/测试)│ wiki │
 │  git-service(+片段/讨论) │ code-review(PR/门禁)          │
 │  ci(流水线/扫描编排) │ release(发布单/灰度/开关)          │
 │  insights(DORA/报表) │ appcenter │ search │ notify         │
@@ -205,6 +205,7 @@
 codeplan/
 ├─ crates/
 │  ├─ kernel/        # 身份、RBAC、审计、配置、错误、事件契约
+│  ├─ identity/      # 身份域:用户/组织/团队、本地账号、JWT 会话、RBAC、审计
 │  ├─ project/       # 工作项、迭代、看板、工时、测试管理(域逻辑)
 │  ├─ wiki/
 │  ├─ git-service/   # 仓库生命周期、传输代理(gix 读 / http-backend 写)、浏览、LFS、代码片段、讨论区

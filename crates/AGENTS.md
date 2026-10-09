@@ -6,6 +6,7 @@
 |---|---|---|
 | `common` | 分页/时间/ID 宏/校验/错误包装/日志/config | 业务概念、本项目依赖 |
 | `kernel` | 基础 ID 类型、CurrentUser、Authz/AuditSink/IdentityLookup trait、**领域事件 schema(唯一定义处)**、扩展点 re-export、testkit(内存事件总线等测试夹具) | 具体域逻辑、SQL |
+| `identity` | 用户/组织/团队、本地账号(argon2)、JWT 会话、RBAC 实现、审计落盘(`org_*` 表) | 他域实体的仓储访问 |
 | `eventbus` | outbox dispatcher、NATS 封装 | 域语义 |
 | `storage` | OpenDAL 封装 | 域语义 |
 | `ext` | 插件扩展点 trait、注册与生命周期 | 直接依赖业务域 |

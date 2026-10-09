@@ -35,6 +35,7 @@ const L4: &[&str] = &[
     "insights",
     "search",
     "ai",
+    "identity",
 ];
 
 /// 目录名 → 允许依赖的内部 crate 目录名列表。
@@ -47,7 +48,7 @@ fn allowed_deps(crate_dir: &str) -> Option<&'static [&'static str]> {
         "xtask" => Some(&[]),
         // L3 业务域
         "project" | "wiki" | "git-service" | "code-review" | "ci" | "release" | "flags"
-        | "appcenter" | "insights" | "search" | "ai" => Some(L3),
+        | "appcenter" | "insights" | "search" | "ai" | "identity" => Some(L3),
         _ => None,
     }
 }

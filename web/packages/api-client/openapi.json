@@ -15,6 +15,85 @@
           "version"
         ],
         "type": "object"
+      },
+      "LoginRequest": {
+        "description": "登录请求。",
+        "properties": {
+          "password": {
+            "description": "密码。",
+            "type": "string"
+          },
+          "username": {
+            "description": "登录名。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "password"
+        ],
+        "type": "object"
+      },
+      "LoginResponse": {
+        "description": "登录响应。",
+        "properties": {
+          "display_name": {
+            "description": "显示名。",
+            "type": "string"
+          },
+          "expires_at": {
+            "description": "过期时间(RFC 3339)。",
+            "type": "string"
+          },
+          "is_platform_admin": {
+            "description": "是否平台管理员。",
+            "type": "boolean"
+          },
+          "token": {
+            "description": "JWT(随请求 `Authorization: Bearer <token>` 携带)。",
+            "type": "string"
+          },
+          "user_id": {
+            "description": "用户 ID。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "expires_at",
+          "user_id",
+          "display_name",
+          "is_platform_admin"
+        ],
+        "type": "object"
+      },
+      "MeResponse": {
+        "description": "当前用户信息。",
+        "properties": {
+          "display_name": {
+            "description": "显示名。",
+            "type": "string"
+          },
+          "email": {
+            "description": "邮箱。",
+            "type": "string"
+          },
+          "id": {
+            "description": "用户 ID。",
+            "type": "string"
+          },
+          "is_platform_admin": {
+            "description": "是否平台管理员。",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "display_name",
+          "email",
+          "is_platform_admin"
+        ],
+        "type": "object"
       }
     }
   },
@@ -29,6 +108,57 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/auth/login": {
+      "post": {
+        "operationId": "login",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "用户名 + 密码登录。",
+        "tags": []
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "operationId": "logout",
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "登出(无状态 JWT:由客户端丢弃令牌;令牌吊销表随企业特性引入)。",
+        "tags": []
+      }
+    },
     "/api/health": {
       "get": {
         "operationId": "health",
@@ -45,6 +175,35 @@
           }
         },
         "summary": "Liveness/Readiness 探针。",
+        "tags": []
+      }
+    },
+    "/api/me": {
+      "get": {
+        "operationId": "me",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "当前用户信息。",
         "tags": []
       }
     }

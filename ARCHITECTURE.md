@@ -11,7 +11,7 @@
 
 ```
 L4 组合根      server          # 唯一知道所有域的地方:装配路由/事件订阅/插件/聚合 OpenAPI
-L3 业务域      project wiki git-service code-review ci release flags appcenter insights ai
+L3 业务域      identity project wiki git-service code-review ci release flags appcenter insights search ai
 L2 基础设施    eventbus storage ext(插件 SDK) notify
 L1 公共        kernel(平台契约) common(纯工具)
 ```
