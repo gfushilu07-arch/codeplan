@@ -35,32 +35,48 @@
         "type": "object"
       },
       "LoginResponse": {
-        "description": "登录响应。",
+        "description": "登录响应:直接发会话,或要求 TOTP 二次验证。",
         "properties": {
           "display_name": {
             "description": "显示名。",
             "type": "string"
           },
           "expires_at": {
-            "description": "过期时间(RFC 3339)。",
-            "type": "string"
+            "description": "过期时间(仅 `requires_totp = false` 时存在)。",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "is_platform_admin": {
             "description": "是否平台管理员。",
             "type": "boolean"
           },
+          "requires_totp": {
+            "description": "是否需要 TOTP 二次验证(为 true 时凭 `ticket` 调 `/api/auth/login/totp`)。",
+            "type": "boolean"
+          },
+          "ticket": {
+            "description": "TOTP 二次验证票据(仅 `requires_totp = true` 时存在)。",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "token": {
-            "description": "JWT(随请求 `Authorization: Bearer <token>` 携带)。",
-            "type": "string"
+            "description": "JWT(仅 `requires_totp = false` 时存在)。",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "user_id": {
-            "description": "用户 ID。",
+            "description": "用户 ID(两种情形都有)。",
             "type": "string"
           }
         },
         "required": [
-          "token",
-          "expires_at",
+          "requires_totp",
           "user_id",
           "display_name",
           "is_platform_admin"
@@ -92,6 +108,55 @@
           "display_name",
           "email",
           "is_platform_admin"
+        ],
+        "type": "object"
+      },
+      "TotpCodeRequest": {
+        "description": "TOTP 验证码请求。",
+        "properties": {
+          "code": {
+            "description": "6 位验证码。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "type": "object"
+      },
+      "TotpLoginRequest": {
+        "description": "TOTP 二次验证请求。",
+        "properties": {
+          "code": {
+            "description": "6 位验证码。",
+            "type": "string"
+          },
+          "ticket": {
+            "description": "登录返回的 MFA 票据。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticket",
+          "code"
+        ],
+        "type": "object"
+      },
+      "TotpSetupResponse": {
+        "description": "TOTP setup 响应。",
+        "properties": {
+          "otpauth_url": {
+            "description": "otpauth:// URL(扫码用)。",
+            "type": "string"
+          },
+          "secret": {
+            "description": "base32 密钥(手工录入用)。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "secret",
+          "otpauth_url"
         ],
         "type": "object"
       }
@@ -147,6 +212,45 @@
         "tags": []
       }
     },
+    "/api/auth/login/totp": {
+      "post": {
+        "operationId": "login_totp",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TotpLoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "TOTP 二次验证换取会话。",
+        "tags": []
+      }
+    },
     "/api/auth/logout": {
       "post": {
         "operationId": "logout",
@@ -156,6 +260,69 @@
           }
         },
         "summary": "登出(无状态 JWT:由客户端丢弃令牌;令牌吊销表随企业特性引入)。",
+        "tags": []
+      }
+    },
+    "/api/auth/totp/disable": {
+      "post": {
+        "operationId": "totp_disable",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TotpCodeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "关闭 TOTP。",
+        "tags": []
+      }
+    },
+    "/api/auth/totp/enable": {
+      "post": {
+        "operationId": "totp_enable",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TotpCodeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "确认启用 TOTP。",
+        "tags": []
+      }
+    },
+    "/api/auth/totp/setup": {
+      "post": {
+        "operationId": "totp_setup",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TotpSetupResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "生成 TOTP 密钥(待确认;enable 前登录不受影响)。",
         "tags": []
       }
     },

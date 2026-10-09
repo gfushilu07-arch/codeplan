@@ -21,6 +21,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/login/totp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** TOTP 二次验证换取会话。 */
+        post: operations["login_totp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/logout": {
         parameters: {
             query?: never;
@@ -32,6 +49,57 @@ export interface paths {
         put?: never;
         /** 登出(无状态 JWT:由客户端丢弃令牌;令牌吊销表随企业特性引入)。 */
         post: operations["logout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/totp/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 关闭 TOTP。 */
+        post: operations["totp_disable"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/totp/enable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 确认启用 TOTP。 */
+        post: operations["totp_enable"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/totp/setup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 生成 TOTP 密钥(待确认;enable 前登录不受影响)。 */
+        post: operations["totp_setup"];
         delete?: never;
         options?: never;
         head?: never;
@@ -87,17 +155,21 @@ export interface components {
             /** @description 登录名。 */
             username: string;
         };
-        /** @description 登录响应。 */
+        /** @description 登录响应:直接发会话,或要求 TOTP 二次验证。 */
         LoginResponse: {
             /** @description 显示名。 */
             display_name: string;
-            /** @description 过期时间(RFC 3339)。 */
-            expires_at: string;
+            /** @description 过期时间(仅 `requires_totp = false` 时存在)。 */
+            expires_at?: string | null;
             /** @description 是否平台管理员。 */
             is_platform_admin: boolean;
-            /** @description JWT(随请求 `Authorization: Bearer <token>` 携带)。 */
-            token: string;
-            /** @description 用户 ID。 */
+            /** @description 是否需要 TOTP 二次验证(为 true 时凭 `ticket` 调 `/api/auth/login/totp`)。 */
+            requires_totp: boolean;
+            /** @description TOTP 二次验证票据(仅 `requires_totp = true` 时存在)。 */
+            ticket?: string | null;
+            /** @description JWT(仅 `requires_totp = false` 时存在)。 */
+            token?: string | null;
+            /** @description 用户 ID(两种情形都有)。 */
             user_id: string;
         };
         /** @description 当前用户信息。 */
@@ -110,6 +182,25 @@ export interface components {
             id: string;
             /** @description 是否平台管理员。 */
             is_platform_admin: boolean;
+        };
+        /** @description TOTP 验证码请求。 */
+        TotpCodeRequest: {
+            /** @description 6 位验证码。 */
+            code: string;
+        };
+        /** @description TOTP 二次验证请求。 */
+        TotpLoginRequest: {
+            /** @description 6 位验证码。 */
+            code: string;
+            /** @description 登录返回的 MFA 票据。 */
+            ticket: string;
+        };
+        /** @description TOTP setup 响应。 */
+        TotpSetupResponse: {
+            /** @description otpauth:// URL(扫码用)。 */
+            otpauth_url: string;
+            /** @description base32 密钥(手工录入用)。 */
+            secret: string;
         };
     };
     responses: never;
@@ -151,6 +242,37 @@ export interface operations {
             };
         };
     };
+    login_totp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TotpLoginRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoginResponse"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoginResponse"];
+                };
+            };
+        };
+    };
     logout: {
         parameters: {
             query?: never;
@@ -165,6 +287,67 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    totp_disable: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TotpCodeRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    totp_enable: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TotpCodeRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    totp_setup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TotpSetupResponse"];
+                };
             };
         };
     };

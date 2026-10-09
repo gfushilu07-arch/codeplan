@@ -60,6 +60,10 @@ pub struct User {
     pub status: UserStatus,
     /// 本地账号密码哈希(argon2;LDAP 用户为空)。
     pub password_hash: Option<String>,
+    /// TOTP 密钥(base32;setup 后 enable 前为待确认状态)。
+    pub totp_secret: Option<String>,
+    /// TOTP 是否已启用。
+    pub totp_enabled: bool,
     /// 是否平台管理员。
     pub is_platform_admin: bool,
     /// 创建时间。
@@ -115,6 +119,26 @@ pub trait UserRepository: Send + Sync {
     /// # Errors
     /// 存储故障。
     async fn count(&self) -> Result<i64, codeplan_common::error::AppError>;
+
+    /// 按邮箱查询(OIDC JIT 开通用)。
+    ///
+    /// # Errors
+    /// 存储故障。
+    async fn find_by_email(
+        &self,
+        email: &str,
+    ) -> Result<Option<User>, codeplan_common::error::AppError>;
+
+    /// 保存用户(TOTP 开关/密钥等状态更新)。
+    ///
+    /// # Errors
+    /// 存储故障。
+    async fn save_totp(
+        &self,
+        id: UserId,
+        secret: Option<String>,
+        enabled: bool,
+    ) -> Result<(), codeplan_common::error::AppError>;
 }
 
 /// 组织。

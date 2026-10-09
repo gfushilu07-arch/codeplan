@@ -40,6 +40,8 @@ impl InMemoryUserRepository {
                 UserStatus::Active
             },
             password_hash: password.map(|p| crate::service::hash_password(p).expect("哈希失败")),
+            totp_secret: None,
+            totp_enabled: false,
             is_platform_admin: admin,
             created_at: codeplan_common::time::now(),
             updated_at: codeplan_common::time::now(),
@@ -74,6 +76,8 @@ impl UserRepository for InMemoryUserRepository {
                 .as_deref()
                 .map(crate::service::hash_password)
                 .transpose()?,
+            totp_secret: None,
+            totp_enabled: false,
             is_platform_admin: user.is_platform_admin,
             created_at: codeplan_common::time::now(),
             updated_at: codeplan_common::time::now(),
@@ -104,5 +108,30 @@ impl UserRepository for InMemoryUserRepository {
 
     async fn count(&self) -> Result<i64, AppError> {
         Ok(i64::try_from(self.users.lock().expect("锁").len()).unwrap_or(0))
+    }
+
+    async fn find_by_email(&self, email: &str) -> Result<Option<User>, AppError> {
+        Ok(self
+            .users
+            .lock()
+            .expect("锁")
+            .iter()
+            .find(|u| u.email == email)
+            .cloned())
+    }
+
+    async fn save_totp(
+        &self,
+        id: UserId,
+        secret: Option<String>,
+        enabled: bool,
+    ) -> Result<(), AppError> {
+        let mut users = self.users.lock().expect("锁");
+        if let Some(u) = users.iter_mut().find(|u| u.id == id) {
+            u.totp_secret = secret;
+            u.totp_enabled = enabled;
+            u.updated_at = codeplan_common::time::now();
+        }
+        Ok(())
     }
 }

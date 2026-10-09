@@ -32,6 +32,8 @@ struct UserRow {
     display_name: String,
     status: String,
     password_hash: Option<String>,
+    totp_secret: Option<String>,
+    totp_enabled: bool,
     is_platform_admin: bool,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -49,6 +51,8 @@ impl TryFrom<UserRow> for User {
             status: UserStatus::from_str_opt(&row.status)
                 .ok_or_else(|| AppError::internal(DOMAIN_CODE))?,
             password_hash: row.password_hash,
+            totp_secret: row.totp_secret,
+            totp_enabled: row.totp_enabled,
             is_platform_admin: row.is_platform_admin,
             created_at: row.created_at,
             updated_at: row.updated_at,
@@ -85,8 +89,9 @@ impl UserRepository for PgUserRepository {
 
     async fn find_by_username(&self, username: &str) -> Result<Option<User>, AppError> {
         let row = sqlx::query_as::<_, UserRow>(
-            "SELECT id, username, email, display_name, status, password_hash, \
-             is_platform_admin, created_at, updated_at FROM org_user WHERE username = $1",
+            "SELECT id, username, email, display_name, status, password_hash, totp_secret, \
+             totp_enabled, is_platform_admin, created_at, updated_at \
+             FROM org_user WHERE username = $1",
         )
         .bind(username)
         .fetch_optional(&self.pool)
@@ -97,8 +102,9 @@ impl UserRepository for PgUserRepository {
 
     async fn find_by_id(&self, id: UserId) -> Result<Option<User>, AppError> {
         let row = sqlx::query_as::<_, UserRow>(
-            "SELECT id, username, email, display_name, status, password_hash, \
-             is_platform_admin, created_at, updated_at FROM org_user WHERE id = $1",
+            "SELECT id, username, email, display_name, status, password_hash, totp_secret, \
+             totp_enabled, is_platform_admin, created_at, updated_at \
+             FROM org_user WHERE id = $1",
         )
         .bind(id.as_uuid())
         .fetch_optional(&self.pool)
@@ -113,6 +119,38 @@ impl UserRepository for PgUserRepository {
             .await
             .map_err(|_| AppError::internal(DOMAIN_CODE))?;
         Ok(count)
+    }
+
+    async fn find_by_email(&self, email: &str) -> Result<Option<User>, AppError> {
+        let row = sqlx::query_as::<_, UserRow>(
+            "SELECT id, username, email, display_name, status, password_hash, totp_secret, \
+             totp_enabled, is_platform_admin, created_at, updated_at \
+             FROM org_user WHERE email = $1",
+        )
+        .bind(email)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|_| AppError::internal(DOMAIN_CODE))?;
+        row.map(User::try_from).transpose()
+    }
+
+    async fn save_totp(
+        &self,
+        id: UserId,
+        secret: Option<String>,
+        enabled: bool,
+    ) -> Result<(), AppError> {
+        sqlx::query(
+            "UPDATE org_user SET totp_secret = $2, totp_enabled = $3, updated_at = now() \
+             WHERE id = $1",
+        )
+        .bind(id.as_uuid())
+        .bind(&secret)
+        .bind(enabled)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| AppError::internal(DOMAIN_CODE))?;
+        Ok(())
     }
 }
 

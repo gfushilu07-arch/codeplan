@@ -72,12 +72,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ))
     .await?;
 
-    let state = codeplan_identity::api::AuthState { auth };
-    let app: Router = Router::new()
+    let oidc = codeplan_identity::oidc::OidcConfig::from_env()
+        .map(|cfg| Arc::new(codeplan_identity::oidc::OidcCtx::new(cfg)));
+    let state = codeplan_identity::api::AuthState { auth, oidc };
+
+    let mut app = Router::new()
         .route("/api/health", get(health))
         .route("/api/docs/openapi.json", get(openapi_json))
-        .merge(codeplan_identity::api::routes())
-        .with_state(state);
+        .merge(codeplan_identity::api::routes());
+    if state.oidc.is_some() {
+        app = app.merge(codeplan_identity::oidc::routes());
+    }
+    let app = app.with_state(state);
 
     let addr = env_or("CODEPLAN_ADDR", "0.0.0.0:8080");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
