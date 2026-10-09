@@ -316,4 +316,372 @@ impl WorkItemRepository for PgWorkItemRepository {
             .ok_or_else(|| AppError::not_found(DOMAIN_CODE, "工作项不存在"))?;
         row.try_into()
     }
+
+    async fn set_sprint(
+        &self,
+        id: crate::domain::WorkItemId,
+        sprint_id: Option<crate::domain::SprintId>,
+    ) -> Result<(), AppError> {
+        sqlx::query("UPDATE proj_work_item SET sprint_id = $2, updated_at = now() WHERE id = $1")
+            .bind(id.as_uuid())
+            .bind(sprint_id.map(|s| s.as_uuid()))
+            .execute(&self.pool)
+            .await
+            .map_err(pm_internal)?;
+        Ok(())
+    }
+
+    async fn set_milestone(
+        &self,
+        id: crate::domain::WorkItemId,
+        milestone_id: Option<crate::domain::MilestoneId>,
+    ) -> Result<(), AppError> {
+        sqlx::query(
+            "UPDATE proj_work_item SET milestone_id = $2, updated_at = now() WHERE id = $1",
+        )
+        .bind(id.as_uuid())
+        .bind(milestone_id.map(|m| m.as_uuid()))
+        .execute(&self.pool)
+        .await
+        .map_err(pm_internal)?;
+        Ok(())
+    }
+}
+
+/// 迭代仓储 PG 实现。
+#[derive(Clone)]
+pub struct PgSprintRepository {
+    pool: PgPool,
+}
+
+impl PgSprintRepository {
+    /// 构造。
+    #[must_use]
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn row_into(
+        project_id: ProjectId,
+        id: uuid::Uuid,
+        name: String,
+        goal: String,
+        starts_at: Option<DateTime<Utc>>,
+        ends_at: Option<DateTime<Utc>>,
+        capacity_points: i32,
+        status: String,
+        created_at: DateTime<Utc>,
+    ) -> crate::domain::Sprint {
+        crate::domain::Sprint {
+            id: crate::domain::SprintId::from_uuid(id),
+            project_id,
+            name,
+            goal,
+            starts_at,
+            ends_at,
+            capacity_points,
+            status: crate::domain::SprintStatus::from_str_opt(&status)
+                .unwrap_or(crate::domain::SprintStatus::Planned),
+            created_at,
+        }
+    }
+}
+
+#[async_trait]
+impl crate::domain::SprintRepository for PgSprintRepository {
+    async fn create(
+        &self,
+        project_id: ProjectId,
+        sprint: &crate::domain::NewSprint,
+    ) -> Result<crate::domain::Sprint, AppError> {
+        let (id, created_at): (uuid::Uuid, DateTime<Utc>) = sqlx::query_as(
+            "INSERT INTO proj_sprint (id, project_id, name, goal, starts_at, ends_at, capacity_points) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, created_at",
+        )
+        .bind(uuid::Uuid::new_v4())
+        .bind(project_id.as_uuid())
+        .bind(&sprint.name)
+        .bind(&sprint.goal)
+        .bind(sprint.starts_at)
+        .bind(sprint.ends_at)
+        .bind(sprint.capacity_points)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(pm_internal)?;
+        Ok(Self::row_into(
+            project_id,
+            id,
+            sprint.name.clone(),
+            sprint.goal.clone(),
+            sprint.starts_at,
+            sprint.ends_at,
+            sprint.capacity_points,
+            "planned".to_owned(),
+            created_at,
+        ))
+    }
+
+    async fn list_by_project(
+        &self,
+        project_id: ProjectId,
+    ) -> Result<Vec<crate::domain::Sprint>, AppError> {
+        let rows: Vec<(
+            uuid::Uuid,
+            String,
+            String,
+            Option<DateTime<Utc>>,
+            Option<DateTime<Utc>>,
+            i32,
+            String,
+            DateTime<Utc>,
+        )> = sqlx::query_as(
+            "SELECT id, name, goal, starts_at, ends_at, capacity_points, status, created_at \
+                 FROM proj_sprint WHERE project_id = $1 ORDER BY created_at DESC",
+        )
+        .bind(project_id.as_uuid())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(pm_internal)?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, name, goal, sa, ea, cp, st, ca)| {
+                Self::row_into(project_id, id, name, goal, sa, ea, cp, st, ca)
+            })
+            .collect())
+    }
+
+    async fn find_by_id(
+        &self,
+        id: crate::domain::SprintId,
+    ) -> Result<Option<crate::domain::Sprint>, AppError> {
+        let rows: Vec<(uuid::Uuid, uuid::Uuid, String, String, Option<DateTime<Utc>>, Option<DateTime<Utc>>, i32, String, DateTime<Utc>)> =
+            sqlx::query_as(
+                "SELECT id, project_id, name, goal, starts_at, ends_at, capacity_points, status, created_at \
+                 FROM proj_sprint WHERE id = $1",
+            )
+            .bind(id.as_uuid())
+            .fetch_all(&self.pool)
+            .await
+            .map_err(pm_internal)?;
+        Ok(rows
+            .into_iter()
+            .next()
+            .map(|(id, project_id, name, goal, sa, ea, cp, st, ca)| {
+                Self::row_into(
+                    ProjectId::from_uuid(project_id),
+                    id,
+                    name,
+                    goal,
+                    sa,
+                    ea,
+                    cp,
+                    st,
+                    ca,
+                )
+            }))
+    }
+
+    async fn update_status(
+        &self,
+        id: crate::domain::SprintId,
+        status: crate::domain::SprintStatus,
+    ) -> Result<(), AppError> {
+        sqlx::query("UPDATE proj_sprint SET status = $2, updated_at = now() WHERE id = $1")
+            .bind(id.as_uuid())
+            .bind(status.as_str())
+            .execute(&self.pool)
+            .await
+            .map_err(pm_internal)?;
+        Ok(())
+    }
+
+    async fn demote_active(&self, project_id: ProjectId) -> Result<(), AppError> {
+        sqlx::query(
+            "UPDATE proj_sprint SET status = 'planned', updated_at = now() \
+             WHERE project_id = $1 AND status = 'active'",
+        )
+        .bind(project_id.as_uuid())
+        .execute(&self.pool)
+        .await
+        .map_err(pm_internal)?;
+        Ok(())
+    }
+
+    async fn progress(
+        &self,
+        id: crate::domain::SprintId,
+    ) -> Result<crate::domain::SprintProgress, AppError> {
+        let (total, done, points): (i64, i64, Option<i64>) = sqlx::query_as(
+            "SELECT count(*), count(*) FILTER (WHERE status = 'done'), \
+             SUM(COALESCE((custom_fields->>'story_points')::int, 0)) \
+             FROM proj_work_item WHERE sprint_id = $1",
+        )
+        .bind(id.as_uuid())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(pm_internal)?;
+        Ok(crate::domain::SprintProgress {
+            total,
+            done,
+            committed_points: points.unwrap_or(0),
+        })
+    }
+}
+
+/// 里程碑仓储 PG 实现。
+#[derive(Clone)]
+pub struct PgMilestoneRepository {
+    pool: PgPool,
+}
+
+impl PgMilestoneRepository {
+    /// 构造。
+    #[must_use]
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
+    fn row_into(
+        project_id: ProjectId,
+        id: uuid::Uuid,
+        name: String,
+        description: String,
+        due_date: Option<chrono::NaiveDate>,
+        status: String,
+        created_at: DateTime<Utc>,
+    ) -> Result<crate::domain::Milestone, AppError> {
+        Ok(crate::domain::Milestone {
+            id: crate::domain::MilestoneId::from_uuid(id),
+            project_id,
+            name,
+            description,
+            due_date: due_date
+                .and_then(|d| d.and_hms_opt(0, 0, 0))
+                .map(|dt| dt.and_utc()),
+            status,
+            created_at,
+        })
+    }
+}
+
+#[async_trait]
+impl crate::domain::MilestoneRepository for PgMilestoneRepository {
+    async fn create(
+        &self,
+        project_id: ProjectId,
+        milestone: &crate::domain::NewMilestone,
+    ) -> Result<crate::domain::Milestone, AppError> {
+        let (id, created_at): (uuid::Uuid, DateTime<Utc>) = sqlx::query_as(
+            "INSERT INTO proj_milestone (id, project_id, name, description, due_date) \
+             VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at",
+        )
+        .bind(uuid::Uuid::new_v4())
+        .bind(project_id.as_uuid())
+        .bind(&milestone.name)
+        .bind(&milestone.description)
+        .bind(milestone.due_date.map(|d| d.date_naive()))
+        .fetch_one(&self.pool)
+        .await
+        .map_err(pm_internal)?;
+        Self::row_into(
+            project_id,
+            id,
+            milestone.name.clone(),
+            milestone.description.clone(),
+            milestone.due_date.map(|d| d.date_naive()),
+            "open".to_owned(),
+            created_at,
+        )
+    }
+
+    async fn list_by_project(
+        &self,
+        project_id: ProjectId,
+    ) -> Result<Vec<crate::domain::Milestone>, AppError> {
+        let rows: Vec<(
+            uuid::Uuid,
+            String,
+            String,
+            Option<chrono::NaiveDate>,
+            String,
+            DateTime<Utc>,
+        )> = sqlx::query_as(
+            "SELECT id, name, description, due_date, status, created_at \
+                 FROM proj_milestone WHERE project_id = $1 ORDER BY created_at",
+        )
+        .bind(project_id.as_uuid())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(pm_internal)?;
+        rows.into_iter()
+            .map(|(id, name, desc, due, st, ca)| {
+                Self::row_into(project_id, id, name, desc, due, st, ca)
+            })
+            .collect()
+    }
+
+    async fn find_by_id(
+        &self,
+        id: crate::domain::MilestoneId,
+    ) -> Result<Option<crate::domain::Milestone>, AppError> {
+        let rows: Vec<(
+            uuid::Uuid,
+            uuid::Uuid,
+            String,
+            String,
+            Option<chrono::NaiveDate>,
+            String,
+            DateTime<Utc>,
+        )> = sqlx::query_as(
+            "SELECT id, project_id, name, description, due_date, status, created_at \
+                 FROM proj_milestone WHERE id = $1",
+        )
+        .bind(id.as_uuid())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(pm_internal)?;
+        rows.into_iter()
+            .next()
+            .map(|(id, project_id, name, desc, due, st, ca)| {
+                Self::row_into(
+                    ProjectId::from_uuid(project_id),
+                    id,
+                    name,
+                    desc,
+                    due,
+                    st,
+                    ca,
+                )
+            })
+            .transpose()
+    }
+
+    async fn close(&self, id: crate::domain::MilestoneId) -> Result<(), AppError> {
+        sqlx::query(
+            "UPDATE proj_milestone SET status = 'closed', updated_at = now() WHERE id = $1",
+        )
+        .bind(id.as_uuid())
+        .execute(&self.pool)
+        .await
+        .map_err(pm_internal)?;
+        Ok(())
+    }
+
+    async fn progress(
+        &self,
+        id: crate::domain::MilestoneId,
+    ) -> Result<crate::domain::MilestoneProgress, AppError> {
+        let (total, done): (i64, i64) = sqlx::query_as(
+            "SELECT count(*), count(*) FILTER (WHERE status = 'done') \
+             FROM proj_work_item WHERE milestone_id = $1",
+        )
+        .bind(id.as_uuid())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(pm_internal)?;
+        Ok(crate::domain::MilestoneProgress { total, done })
+    }
 }

@@ -19,6 +19,8 @@ use crate::workflow::StateMachine;
 pub struct ProjectService {
     projects: Arc<dyn ProjectRepository>,
     items: Arc<dyn WorkItemRepository>,
+    sprints: Arc<dyn crate::domain::SprintRepository>,
+    milestones: Arc<dyn crate::domain::MilestoneRepository>,
     authz: Arc<dyn Authz>,
     events: Arc<dyn codeplan_kernel::events::EventBus>,
 }
@@ -38,15 +40,209 @@ impl ProjectService {
     pub fn new(
         projects: Arc<dyn ProjectRepository>,
         items: Arc<dyn WorkItemRepository>,
+        sprints: Arc<dyn crate::domain::SprintRepository>,
+        milestones: Arc<dyn crate::domain::MilestoneRepository>,
         authz: Arc<dyn Authz>,
         events: Arc<dyn codeplan_kernel::events::EventBus>,
     ) -> Self {
         Self {
             projects,
             items,
+            sprints,
+            milestones,
             authz,
             events,
         }
+    }
+
+    /// 创建迭代。
+    ///
+    /// # Errors
+    /// 项目不存在 `PM-404`;无管理权限 `PM-403`。
+    pub async fn create_sprint(
+        &self,
+        actor: &CurrentUser,
+        project_key: &str,
+        sprint: &crate::domain::NewSprint,
+    ) -> Result<crate::domain::Sprint, AppError> {
+        let project = self.project_by_key(project_key).await?;
+        self.ensure(actor, Action::Admin, project.id).await?;
+        self.sprints.create(project.id, sprint).await
+    }
+
+    /// 迭代列表(含进度)。
+    ///
+    /// # Errors
+    /// 项目不存在 `PM-404`;无读权限 `PM-403`。
+    pub async fn list_sprints(
+        &self,
+        actor: &CurrentUser,
+        project_key: &str,
+    ) -> Result<Vec<(crate::domain::Sprint, crate::domain::SprintProgress)>, AppError> {
+        let project = self.project_by_key(project_key).await?;
+        self.ensure(actor, Action::Read, project.id).await?;
+        let sprints = self.sprints.list_by_project(project.id).await?;
+        let mut out = Vec::new();
+        for s in sprints {
+            let progress = self.sprints.progress(s.id).await?;
+            out.push((s, progress));
+        }
+        Ok(out)
+    }
+
+    /// 启动迭代(同项目其他 active 迭代自动回到 planned)。
+    ///
+    /// # Errors
+    /// 迭代不存在 `PM-404`;已完成不可启动 `PM-409`;无管理权限 `PM-403`。
+    pub async fn start_sprint(
+        &self,
+        actor: &CurrentUser,
+        sprint_id: crate::domain::SprintId,
+    ) -> Result<(), AppError> {
+        let sprint = self
+            .sprints
+            .find_by_id(sprint_id)
+            .await?
+            .ok_or_else(|| AppError::not_found(DOMAIN_CODE, "迭代不存在"))?;
+        self.ensure(actor, Action::Admin, sprint.project_id).await?;
+        if sprint.status == crate::domain::SprintStatus::Completed {
+            return Err(AppError::conflict(DOMAIN_CODE, "已完成的迭代不可再启动"));
+        }
+        self.sprints.demote_active(sprint.project_id).await?;
+        self.sprints
+            .update_status(sprint_id, crate::domain::SprintStatus::Active)
+            .await
+    }
+
+    /// 完成迭代。
+    ///
+    /// # Errors
+    /// 迭代不存在 `PM-404`;未启动 `PM-409`;无管理权限 `PM-403`。
+    pub async fn complete_sprint(
+        &self,
+        actor: &CurrentUser,
+        sprint_id: crate::domain::SprintId,
+    ) -> Result<(), AppError> {
+        let sprint = self
+            .sprints
+            .find_by_id(sprint_id)
+            .await?
+            .ok_or_else(|| AppError::not_found(DOMAIN_CODE, "迭代不存在"))?;
+        self.ensure(actor, Action::Admin, sprint.project_id).await?;
+        if sprint.status != crate::domain::SprintStatus::Active {
+            return Err(AppError::conflict(DOMAIN_CODE, "仅进行中的迭代可完成"));
+        }
+        self.sprints
+            .update_status(sprint_id, crate::domain::SprintStatus::Completed)
+            .await?;
+        self.audit_event(actor, "sprint.completed", sprint.id.as_uuid())
+            .await;
+        Ok(())
+    }
+
+    /// 工作项关联迭代。
+    ///
+    /// # Errors
+    /// 无写权限 `PM-403`。
+    pub async fn set_item_sprint(
+        &self,
+        actor: &CurrentUser,
+        item_id: crate::domain::WorkItemId,
+        sprint_id: Option<crate::domain::SprintId>,
+    ) -> Result<(), AppError> {
+        let item = self
+            .items
+            .find_by_id(item_id)
+            .await?
+            .ok_or_else(|| AppError::not_found(DOMAIN_CODE, "工作项不存在"))?;
+        self.ensure(actor, Action::Write, item.project_id).await?;
+        self.items.set_sprint(item_id, sprint_id).await
+    }
+
+    /// 创建里程碑。
+    ///
+    /// # Errors
+    /// 项目不存在 `PM-404`;无管理权限 `PM-403`。
+    pub async fn create_milestone(
+        &self,
+        actor: &CurrentUser,
+        project_key: &str,
+        milestone: &crate::domain::NewMilestone,
+    ) -> Result<crate::domain::Milestone, AppError> {
+        let project = self.project_by_key(project_key).await?;
+        self.ensure(actor, Action::Admin, project.id).await?;
+        self.milestones.create(project.id, milestone).await
+    }
+
+    /// 里程碑列表(含进度)。
+    ///
+    /// # Errors
+    /// 项目不存在 `PM-404`;无读权限 `PM-403`。
+    pub async fn list_milestones(
+        &self,
+        actor: &CurrentUser,
+        project_key: &str,
+    ) -> Result<Vec<(crate::domain::Milestone, crate::domain::MilestoneProgress)>, AppError> {
+        let project = self.project_by_key(project_key).await?;
+        self.ensure(actor, Action::Read, project.id).await?;
+        let milestones = self.milestones.list_by_project(project.id).await?;
+        let mut out = Vec::new();
+        for m in milestones {
+            let progress = self.milestones.progress(m.id).await?;
+            out.push((m, progress));
+        }
+        Ok(out)
+    }
+
+    /// 关闭里程碑。
+    ///
+    /// # Errors
+    /// 无管理权限 `PM-403`。
+    pub async fn close_milestone(
+        &self,
+        actor: &CurrentUser,
+        milestone_id: crate::domain::MilestoneId,
+    ) -> Result<(), AppError> {
+        let milestone = self
+            .milestones
+            .find_by_id(milestone_id)
+            .await?
+            .ok_or_else(|| AppError::not_found(DOMAIN_CODE, "里程碑不存在"))?;
+        self.ensure(actor, Action::Admin, milestone.project_id)
+            .await?;
+        self.milestones.close(milestone_id).await?;
+        self.audit_event(actor, "milestone.closed", milestone_id.as_uuid())
+            .await;
+        Ok(())
+    }
+
+    /// 工作项关联里程碑。
+    ///
+    /// # Errors
+    /// 无写权限 `PM-403`。
+    pub async fn set_item_milestone(
+        &self,
+        actor: &CurrentUser,
+        item_id: crate::domain::WorkItemId,
+        milestone_id: Option<crate::domain::MilestoneId>,
+    ) -> Result<(), AppError> {
+        let item = self
+            .items
+            .find_by_id(item_id)
+            .await?
+            .ok_or_else(|| AppError::not_found(DOMAIN_CODE, "工作项不存在"))?;
+        self.ensure(actor, Action::Write, item.project_id).await?;
+        self.items.set_milestone(item_id, milestone_id).await
+    }
+
+    async fn audit_event(&self, actor: &CurrentUser, action: &str, id: uuid::Uuid) {
+        let _ = self
+            .events
+            .publish(vec![
+                EventEnvelope::new(action, json!({"id": id, "actor": actor.id.as_uuid()}))
+                    .with_actor(actor.id.as_uuid().to_string()),
+            ])
+            .await;
     }
 
     /// 创建项目(发布 `project.created`,identity 监听后授予创建者 admin)。

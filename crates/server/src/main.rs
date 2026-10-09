@@ -146,6 +146,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::new(codeplan_project::infra::PgWorkItemRepository::new(
             pool.clone(),
         )),
+        Arc::new(codeplan_project::infra::PgSprintRepository::new(
+            pool.clone(),
+        )),
+        Arc::new(codeplan_project::infra::PgMilestoneRepository::new(
+            pool.clone(),
+        )),
         Arc::clone(&rbac) as Arc<dyn codeplan_kernel::authz::Authz>,
         Arc::clone(&event_bus),
     ));

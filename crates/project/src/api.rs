@@ -4,7 +4,7 @@
 use axum::extract::{Path, Query, State};
 use axum::http::header::AUTHORIZATION;
 use axum::response::Response;
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::{Extension, Json, Router, middleware};
 use codeplan_common::error::AppError;
 use codeplan_common::response::ApiResponse;
@@ -38,6 +38,19 @@ pub fn routes(state: ProjectState) -> Router<ProjectState> {
         .route("/api/projects/{key}/items/{number}", get(get_item))
         .route("/api/workitems/{id}/transition", post(transition))
         .route("/api/workitems/{id}", axum::routing::patch(update_item))
+        .route(
+            "/api/projects/{key}/sprints",
+            post(create_sprint).get(list_sprints),
+        )
+        .route("/api/sprints/{id}/start", post(start_sprint))
+        .route("/api/sprints/{id}/complete", post(complete_sprint))
+        .route("/api/workitems/{id}/sprint", put(set_item_sprint))
+        .route(
+            "/api/projects/{key}/milestones",
+            post(create_milestone).get(list_milestones),
+        )
+        .route("/api/milestones/{id}/close", post(close_milestone))
+        .route("/api/workitems/{id}/milestone", put(set_item_milestone))
         .layer(middleware::from_fn_with_state(state, auth_mw))
 }
 
@@ -349,4 +362,293 @@ async fn update_item(
         )
         .await?;
     Ok(Json(ApiResponse::ok(item_response(&updated))))
+}
+
+// ---------- 迭代与里程碑(T-112) ----------
+
+/// 创建迭代请求。
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct CreateSprintRequest {
+    /// 名称。
+    pub name: String,
+    /// 目标。
+    #[serde(default)]
+    pub goal: String,
+    /// 开始时间(RFC 3339)。
+    pub starts_at: Option<String>,
+    /// 结束时间(RFC 3339)。
+    pub ends_at: Option<String>,
+    /// 容量点数。
+    #[serde(default)]
+    pub capacity_points: i32,
+}
+
+/// 迭代响应(含进度)。
+#[derive(Debug, Serialize, ToSchema)]
+pub struct SprintResponse {
+    /// 迭代 ID。
+    pub id: String,
+    /// 名称。
+    pub name: String,
+    /// 目标。
+    pub goal: String,
+    /// 状态:planned/active/completed。
+    pub status: String,
+    /// 容量点数。
+    pub capacity_points: i32,
+    /// 工作项总数。
+    pub total: i64,
+    /// 已完成数。
+    pub done: i64,
+    /// 提交点数。
+    pub committed_points: i64,
+}
+
+fn parse_time(s: &str) -> Result<chrono::DateTime<chrono::Utc>, AppError> {
+    chrono::DateTime::parse_from_rfc3339(s)
+        .map(|d| d.with_timezone(&chrono::Utc))
+        .map_err(|_| AppError::invalid(DOMAIN_CODE, format!("非法时间:{s}")))
+}
+
+async fn create_sprint(
+    Extension(user): Extension<CurrentUser>,
+    State(st): State<ProjectState>,
+    Path(key): Path<String>,
+    Json(req): Json<CreateSprintRequest>,
+) -> Result<Json<ApiResponse<SprintResponse>>, AppError> {
+    let starts_at = req.starts_at.as_deref().map(parse_time).transpose()?;
+    let ends_at = req.ends_at.as_deref().map(parse_time).transpose()?;
+    let sprint = st
+        .svc
+        .create_sprint(
+            &user,
+            &key,
+            &crate::domain::NewSprint {
+                name: req.name,
+                goal: req.goal,
+                starts_at,
+                ends_at,
+                capacity_points: req.capacity_points,
+            },
+        )
+        .await?;
+    Ok(Json(ApiResponse::ok(SprintResponse {
+        id: sprint.id.as_uuid().to_string(),
+        name: sprint.name,
+        goal: sprint.goal,
+        status: sprint.status.as_str().to_owned(),
+        capacity_points: sprint.capacity_points,
+        total: 0,
+        done: 0,
+        committed_points: 0,
+    })))
+}
+
+async fn list_sprints(
+    Extension(user): Extension<CurrentUser>,
+    State(st): State<ProjectState>,
+    Path(key): Path<String>,
+) -> Result<Json<ApiResponse<Vec<SprintResponse>>>, AppError> {
+    let pairs = st.svc.list_sprints(&user, &key).await?;
+    Ok(Json(ApiResponse::ok(
+        pairs
+            .into_iter()
+            .map(|(s, p)| SprintResponse {
+                id: s.id.as_uuid().to_string(),
+                name: s.name,
+                goal: s.goal,
+                status: s.status.as_str().to_owned(),
+                capacity_points: s.capacity_points,
+                total: p.total,
+                done: p.done,
+                committed_points: p.committed_points,
+            })
+            .collect(),
+    )))
+}
+
+async fn start_sprint(
+    Extension(user): Extension<CurrentUser>,
+    State(st): State<ProjectState>,
+    Path(id): Path<String>,
+) -> Result<Json<ApiResponse<()>>, AppError> {
+    let sprint_id = crate::domain::SprintId::try_from(id.as_str())
+        .map_err(|_| AppError::invalid(DOMAIN_CODE, "非法迭代 ID"))?;
+    st.svc.start_sprint(&user, sprint_id).await?;
+    Ok(Json(ApiResponse {
+        code: "OK".to_owned(),
+        message: "迭代已启动".to_owned(),
+        data: None,
+    }))
+}
+
+async fn complete_sprint(
+    Extension(user): Extension<CurrentUser>,
+    State(st): State<ProjectState>,
+    Path(id): Path<String>,
+) -> Result<Json<ApiResponse<()>>, AppError> {
+    let sprint_id = crate::domain::SprintId::try_from(id.as_str())
+        .map_err(|_| AppError::invalid(DOMAIN_CODE, "非法迭代 ID"))?;
+    st.svc.complete_sprint(&user, sprint_id).await?;
+    Ok(Json(ApiResponse {
+        code: "OK".to_owned(),
+        message: "迭代已完成".to_owned(),
+        data: None,
+    }))
+}
+
+/// 工作项关联迭代请求。
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct SetSprintRequest {
+    /// 迭代 ID(null 移除)。
+    pub sprint_id: Option<String>,
+}
+
+async fn set_item_sprint(
+    Extension(user): Extension<CurrentUser>,
+    State(st): State<ProjectState>,
+    Path(id): Path<String>,
+    Json(req): Json<SetSprintRequest>,
+) -> Result<Json<ApiResponse<()>>, AppError> {
+    let item_id = crate::domain::WorkItemId::try_from(id.as_str())
+        .map_err(|_| AppError::invalid(DOMAIN_CODE, "非法工作项 ID"))?;
+    let sprint_id = match req.sprint_id {
+        Some(s) => Some(
+            crate::domain::SprintId::try_from(s.as_str())
+                .map_err(|_| AppError::invalid(DOMAIN_CODE, "非法迭代 ID"))?,
+        ),
+        None => None,
+    };
+    st.svc.set_item_sprint(&user, item_id, sprint_id).await?;
+    Ok(Json(ApiResponse {
+        code: "OK".to_owned(),
+        message: "已关联".to_owned(),
+        data: None,
+    }))
+}
+
+/// 创建里程碑请求。
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct CreateMilestoneRequest {
+    /// 名称。
+    pub name: String,
+    /// 描述。
+    #[serde(default)]
+    pub description: String,
+    /// 截止日期(RFC 3339)。
+    pub due_date: Option<String>,
+}
+
+/// 里程碑响应(含进度)。
+#[derive(Debug, Serialize, ToSchema)]
+pub struct MilestoneResponse {
+    /// 里程碑 ID。
+    pub id: String,
+    /// 名称。
+    pub name: String,
+    /// 状态:open/closed。
+    pub status: String,
+    /// 截止日期(RFC 3339)。
+    pub due_date: Option<String>,
+    /// 工作项总数。
+    pub total: i64,
+    /// 已完成数。
+    pub done: i64,
+}
+
+async fn create_milestone(
+    Extension(user): Extension<CurrentUser>,
+    State(st): State<ProjectState>,
+    Path(key): Path<String>,
+    Json(req): Json<CreateMilestoneRequest>,
+) -> Result<Json<ApiResponse<MilestoneResponse>>, AppError> {
+    let due_date = req.due_date.as_deref().map(parse_time).transpose()?;
+    let m = st
+        .svc
+        .create_milestone(
+            &user,
+            &key,
+            &crate::domain::NewMilestone {
+                name: req.name,
+                description: req.description,
+                due_date,
+            },
+        )
+        .await?;
+    Ok(Json(ApiResponse::ok(MilestoneResponse {
+        id: m.id.as_uuid().to_string(),
+        name: m.name,
+        status: m.status,
+        due_date: m.due_date.map(|d| d.to_rfc3339()),
+        total: 0,
+        done: 0,
+    })))
+}
+
+async fn list_milestones(
+    Extension(user): Extension<CurrentUser>,
+    State(st): State<ProjectState>,
+    Path(key): Path<String>,
+) -> Result<Json<ApiResponse<Vec<MilestoneResponse>>>, AppError> {
+    let pairs = st.svc.list_milestones(&user, &key).await?;
+    Ok(Json(ApiResponse::ok(
+        pairs
+            .into_iter()
+            .map(|(m, p)| MilestoneResponse {
+                id: m.id.as_uuid().to_string(),
+                name: m.name,
+                status: m.status,
+                due_date: m.due_date.map(|d| d.to_rfc3339()),
+                total: p.total,
+                done: p.done,
+            })
+            .collect(),
+    )))
+}
+
+async fn close_milestone(
+    Extension(user): Extension<CurrentUser>,
+    State(st): State<ProjectState>,
+    Path(id): Path<String>,
+) -> Result<Json<ApiResponse<()>>, AppError> {
+    let milestone_id = crate::domain::MilestoneId::try_from(id.as_str())
+        .map_err(|_| AppError::invalid(DOMAIN_CODE, "非法里程碑 ID"))?;
+    st.svc.close_milestone(&user, milestone_id).await?;
+    Ok(Json(ApiResponse {
+        code: "OK".to_owned(),
+        message: "里程碑已关闭".to_owned(),
+        data: None,
+    }))
+}
+
+/// 工作项关联里程碑请求。
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct SetMilestoneRequest {
+    /// 里程碑 ID(null 移除)。
+    pub milestone_id: Option<String>,
+}
+
+async fn set_item_milestone(
+    Extension(user): Extension<CurrentUser>,
+    State(st): State<ProjectState>,
+    Path(id): Path<String>,
+    Json(req): Json<SetMilestoneRequest>,
+) -> Result<Json<ApiResponse<()>>, AppError> {
+    let item_id = crate::domain::WorkItemId::try_from(id.as_str())
+        .map_err(|_| AppError::invalid(DOMAIN_CODE, "非法工作项 ID"))?;
+    let milestone_id = match req.milestone_id {
+        Some(s) => Some(
+            crate::domain::MilestoneId::try_from(s.as_str())
+                .map_err(|_| AppError::invalid(DOMAIN_CODE, "非法里程碑 ID"))?,
+        ),
+        None => None,
+    };
+    st.svc
+        .set_item_milestone(&user, item_id, milestone_id)
+        .await?;
+    Ok(Json(ApiResponse {
+        code: "OK".to_owned(),
+        message: "已关联".to_owned(),
+        data: None,
+    }))
 }

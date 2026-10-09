@@ -11,7 +11,7 @@
 | 阶段 | 任务数 | 已完成 | 进行中 | 状态 |
 |---|---|---|---|---|
 | 阶段 0 · 工程基建 | 7 | 7 | 0 | ✅ 完成 |
-| 批次一 · 基座 | 20 | 8 | 0 | 🔄 进行中 |
+| 批次一 · 基座 | 20 | 9 | 0 | 🔄 进行中 |
 | 批次二 · 协作 | 15 | 0 | 0 | ⬜ 未开始 |
 | 批次三 · 流水线 | 18 | 0 | 0 | ⬜ 未开始 |
 | 批次四 · 发布与智能 | 18 | 0 | 0 | ⬜ 未开始 |
@@ -72,7 +72,11 @@
   - 事件闭环:project.created → identity 监听自动授予创建者 admin(修复信封嵌套取值);workitem.created/status_changed 入 outbox
   - 架构:kernel::TokenAuthenticator 契约 + 认证中间件(project 域不依赖 identity);ResourceLocator 上移 kernel
   - e2e 8 项全过:建项目→自动授权→建工作项→非法流转 409→合法流转→列表过滤→按编号取项→事件落 outbox
-- [ ] **T-112** 迭代 + 里程碑:规划/容量/进度汇总 · [PM-03,04] · M
+- [x] **T-112** 迭代 + 里程碑:规划/容量/进度汇总 · [PM-03,04] · M ✅ 2026-10-10
+  - proj_sprint/proj_milestone 表 + 工作项关联列(迁移 0007 向后兼容)
+  - 迭代:创建(planned)→ 启动(单 active 规则,旧 active 自动回 planned)→ 完成(409 防重复启动);进度(总数/完成数/提交点数 story_points 求和)
+  - 里程碑:创建(截止日期 DATE)/列表(进度 total/done)/关闭;工作项关联/移除(PUT)
+  - sprint.completed/milestone.closed 事件入 outbox;端到端 8 项全过
 - [ ] **T-113** 多视图 API:看板(列配置/拖拽排序)/列表(筛选批量)/树形(需求分解) · [PM-05] · M
 - [ ] **T-114** 缺陷跟踪类型特化(严重程度/复现步骤/回归) · [PM-08] · S
 - [ ] **T-115** Wiki:文档树 + comrak 渲染 + 附件(经 storage) · [PM-11] · M
@@ -212,3 +216,4 @@
 | 2026-10-09 | T-106 | org_audit_log + PgAuditSink + 五类埋点 + 管理端查询 API;端到端验证 auth.login/rbac.granted 可查 |
 | 2026-10-09 | T-110 | outbox 表 + OutboxEventBus + 中继器(2s 轮询→NATS→标记);e2e 直插事件验证转发;server 已接线 event_bus |
 | 2026-10-09 | T-111 | project 域落地:状态机引擎/工作项/事件闭环(project.created→自动授权);kernel::TokenAuthenticator 契约;ResourceLocator 上移 kernel;e2e 8 项全过 |
+| 2026-10-10 | T-112 | 迭代(单 active 规则/进度汇总含 story_points)+ 里程碑(进度/关闭);工作项关联 PUT 端点;e2e 8 项全过 |
