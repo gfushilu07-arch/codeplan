@@ -10,7 +10,7 @@
 
 | 阶段 | 任务数 | 已完成 | 进行中 | 状态 |
 |---|---|---|---|---|
-| 阶段 0 · 工程基建 | 7 | 3 | 0 | 🔄 进行中 |
+| 阶段 0 · 工程基建 | 7 | 5 | 0 | 🔄 进行中 |
 | 批次一 · 基座 | 20 | 0 | 0 | ⬜ 未开始 |
 | 批次二 · 协作 | 15 | 0 | 0 | ⬜ 未开始 |
 | 批次三 · 流水线 | 18 | 0 | 0 | ⬜ 未开始 |
@@ -27,7 +27,7 @@
 - [x] **T-002** Rust workspace 骨架:19 个 crate 空壳 + xtask + workspace 配置 + clippy/rustfmt 全开 · M ✅ 2026-10-09(cargo check 全绿,rustc 1.99)
 - [x] **T-003** xtask:`lint-deps`(crate 依赖白名单检查)+ `sync-rules`(AGENTS.md → cursor/copilot/claude 指针) · M ✅ 2026-10-09(20 crate 通过;违规注入自检 exit=1)
 - [ ] **T-004** CI:后端(clippy/test/lint-deps/cargo-deny)+ 前端(lint/test/tsc strict)+ OpenAPI diff 检查 · M
-- [ ] **T-005** 前端 monorepo 骨架:pnpm + Turborepo + Vite + apps/main + packages/features 空壳 + tooling 共享配置 · M
+- [x] **T-005** 前端 monorepo 骨架:pnpm + Turborepo + Vite + apps/main + packages/features 空壳 + tooling 共享配置 · M ✅ 2026-10-09(16 包,build/test/lint 全绿)
 - [ ] **T-006** 本地开发环境:`deploy/docker-compose.yml`(PG/Redis/NATS/MinIO/Nginx)+ 种子数据脚本 · M
 - [ ] **T-007** 公共管线:utoipa → OpenAPI → TS client 生成;testkit 雏形(内存事件总线 + testcontainers-PG + fixture) · L
 
@@ -178,3 +178,5 @@
 | 2026-10-09 | T-001 | git init(main)+ README + .gitignore + PR 模板;Rust 工具链安装中 |
 | 2026-10-09 | T-002 | workspace 19 crate 四层骨架 + xtask 壳;cargo check 全绿(实际 19 crate,较计划 +2:notify/agent 独立) |
 | 2026-10-09 | T-003 | lint-deps 白名单检查(含违规注入自检)+ sync-rules 生成 5 个工具规则文件 |
+| 2026-10-09 | T-004 | ci.yml(后端六步 + 前端三步)+ deny.toml + rust-toolchain 锁定;fmt/yaml 校验过 |
+| 2026-10-09 | T-005 | 前端 monorepo:16 包(apps/main + 7 packages + 7 features),tokens/ui/shared 真实可用,build/test/lint 全绿 |

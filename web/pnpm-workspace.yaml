@@ -1,0 +1,8 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+  - "features/*"
+  - "tooling/*"
+
+# 前端包不回退 npm 源之外的内容
+minimumReleaseAge: 0
