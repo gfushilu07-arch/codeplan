@@ -11,7 +11,7 @@
 | 阶段 | 任务数 | 已完成 | 进行中 | 状态 |
 |---|---|---|---|---|
 | 阶段 0 · 工程基建 | 7 | 7 | 0 | ✅ 完成 |
-| 批次一 · 基座 | 20 | 6 | 0 | 🔄 进行中 |
+| 批次一 · 基座 | 20 | 7 | 0 | 🔄 进行中 |
 | 批次二 · 协作 | 15 | 0 | 0 | ⬜ 未开始 |
 | 批次三 · 流水线 | 18 | 0 | 0 | ⬜ 未开始 |
 | 批次四 · 发布与智能 | 18 | 0 | 0 | ⬜ 未开始 |
@@ -61,7 +61,10 @@
 
 ### 事件与项目管理
 
-- [ ] **T-110** eventbus:outbox 表 + dispatcher + NATS JetStream 封装 + 事件信封;kernel::events 批次一事件(workitem.*/member.*) · [事件体系] · L
+- [x] **T-110** eventbus:outbox 表 + dispatcher + NATS JetStream 封装 + 事件信封;kernel::events 批次一事件(workitem.*/member.*) · [事件体系] · L ✅ 2026-10-09
+  - OutboxEventBus 实现 kernel::EventBus(publish=追加 outbox);PgOutboxStore(append/fetch/mark)
+  - 中继器 2s 轮询 → NATS 主题 codeplan.events.<type> → 标记 published;失败仅告警下轮重试
+  - e2e:outbox 直插事件 → 中继转发并标记(published_at=t);workitem.*/member.* 事件类型随 T-111 域落地时在 kernel::events 定义
 - [ ] **T-111** project 域:工作项模型(多类型/自定义字段 JSONB)+ 状态机引擎(流转/权限/校验) · [PM-01,02] · L
 - [ ] **T-112** 迭代 + 里程碑:规划/容量/进度汇总 · [PM-03,04] · M
 - [ ] **T-113** 多视图 API:看板(列配置/拖拽排序)/列表(筛选批量)/树形(需求分解) · [PM-05] · M
@@ -201,3 +204,4 @@
 | 2026-10-09 | T-104 | RBAC:Authz 落地 + 资源角色 grant/revoke/members/my-role;端到端 7 项全过;自定义角色引擎按需延后 |
 | 2026-10-09 | T-105 | LDAP 目录抽象(生产 ldap3/测试内存双实现)+ 登录回退 JIT + 定时/手动同步;真实 AD 联调留企业环境 |
 | 2026-10-09 | T-106 | org_audit_log + PgAuditSink + 五类埋点 + 管理端查询 API;端到端验证 auth.login/rbac.granted 可查 |
+| 2026-10-09 | T-110 | outbox 表 + OutboxEventBus + 中继器(2s 轮询→NATS→标记);e2e 直插事件验证转发;server 已接线 event_bus |

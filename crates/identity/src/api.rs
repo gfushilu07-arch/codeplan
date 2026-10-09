@@ -26,6 +26,8 @@ pub struct AuthState {
     pub ldap: Option<Arc<dyn crate::ldap::LdapDirectory>>,
     /// 审计查询(PG 实现;记录写入经服务内嵌槽)。
     pub audit: Arc<crate::infra::PgAuditSink>,
+    /// 事件总线(域发布领域事件用;T-111 起接入业务)。
+    pub event_bus: Arc<dyn codeplan_kernel::events::EventBus>,
 }
 
 /// 身份域路由(挂载到 `/api`)。

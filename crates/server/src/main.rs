@@ -114,12 +114,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let oidc = codeplan_identity::oidc::OidcConfig::from_env()
         .map(|cfg| Arc::new(codeplan_identity::oidc::OidcCtx::new(cfg)));
+    // 事件总线(T-110):publish → outbox,中继器转发 NATS
+    let nats_url = env_or("CODEPLAN_NATS_URL", "nats://localhost:4223");
+    let event_bus: Arc<dyn codeplan_kernel::events::EventBus> =
+        Arc::new(codeplan_eventbus::nats::OutboxEventBus::new(
+            codeplan_eventbus::outbox::PgOutboxStore::new(pool.clone()),
+        ));
+    {
+        let pool = pool.clone();
+        let nats_url = nats_url.clone();
+        tokio::spawn(async move {
+            if let Err(e) = codeplan_eventbus::dispatcher::run(pool, &nats_url).await {
+                eprintln!("eventbus 中继器退出: {e}");
+            }
+        });
+    }
+
     let state = codeplan_identity::api::AuthState {
         auth,
         oidc,
         rbac,
         ldap: directory,
         audit: Arc::new(codeplan_identity::infra::PgAuditSink::new(pool.clone())),
+        event_bus,
     };
 
     let mut app = Router::new()

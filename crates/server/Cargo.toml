@@ -10,6 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 axum.workspace = true
+codeplan-eventbus.workspace = true
 codeplan-identity.workspace = true
 codeplan-kernel.workspace = true
 serde.workspace = true
