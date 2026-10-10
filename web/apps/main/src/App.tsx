@@ -1,43 +1,51 @@
 import { useEffect, useState } from "react";
-import { fetchHealth, type Health } from "@codeplan/api-client";
-import { Button } from "@codeplan/ui";
+import { fetchMe, getToken, setToken, login, type MeInfo } from "@codeplan/api-client";
+import { LoginPage } from "./LoginPage";
+import { Shell } from "./Shell";
+import { WorkbenchPage } from "./WorkbenchPage";
 
-/** 骨架占位首页:T-131(main shell)替换为真实布局。 */
+/** 应用根:未登录显示登录页,已登录进入外壳。 */
 export function App() {
-  const [health, setHealth] = useState<Health | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [me, setMe] = useState<MeInfo | null>(null);
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    fetchHealth("/api")
-      .then(setHealth)
-      .catch((e: Error) => setError(e.message));
+    if (!getToken()) {
+      setReady(true);
+      return;
+    }
+    fetchMe()
+      .then(setMe)
+      .catch(() => setToken(null))
+      .finally(() => setReady(true));
   }, []);
 
+  const handleLogin = async (username: string, password: string) => {
+    const session = await login(username, password);
+    if (!session.token) throw new Error("登录响应缺少令牌");
+    setToken(session.token);
+    setMe({
+      id: session.user_id,
+      display_name: session.display_name,
+      email: "",
+      is_platform_admin: session.is_platform_admin,
+    });
+  };
+
+  const handleLogout = () => {
+    setToken(null);
+    setMe(null);
+  };
+
+  if (!ready) {
+    return <div style={{ padding: "var(--cp-space-4)", fontFamily: "var(--cp-font-sans)" }}>加载中…</div>;
+  }
+  if (!me) {
+    return <LoginPage onLogin={handleLogin} />;
+  }
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        background: "var(--cp-color-bg)",
-        color: "var(--cp-color-text)",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: "var(--cp-space-3)",
-        fontFamily: "var(--cp-font-sans)",
-      }}
-    >
-      <h1 style={{ fontSize: 28, margin: 0 }}>CodePlan</h1>
-      <p style={{ color: "var(--cp-color-text-muted)", margin: 0 }}>
-        内部 PaaS + 研发管理闭环 · 骨架已就绪
-      </p>
-      <p style={{ margin: 0, fontFamily: "var(--cp-font-mono)", fontSize: 13 }}>
-        {error ? `后端未连接:${error}` : health ? `后端 ${health.status} · v${health.version}` : "连接中…"}
-      </p>
-      <div style={{ display: "flex", gap: "var(--cp-space-2)" }}>
-        <Button>主按钮</Button>
-        <Button variant="secondary">次按钮</Button>
-      </div>
-    </div>
+    <Shell me={me} route="/" onLogout={handleLogout}>
+      <WorkbenchPage />
+    </Shell>
   );
 }

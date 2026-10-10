@@ -115,8 +115,13 @@
 
 ### 前端 · 批次一
 
-- [ ] **T-130** design-tokens 全套(色板/暗色/密度)+ ui 包基础组件(Button/DataTable/StatusBadge/PageHeader/Empty…)+ Storybook · L
-- [ ] **T-131** main shell:布局、主导航、路由骨架、登录页、全局 Provider、错误处理 · M
+- [x] **T-130** design-tokens 全套(色板/暗色/密度)+ ui 包基础组件 + api-client 认证封装 · L ✅ 2026-10-10
+  - design-tokens:品牌靛蓝/语义色/中性阶/字体(中文优化+等宽)/8px 间距/圆角阴影/暗色映射(CSS vars)
+  - ui:Button(primary/secondary/danger,token 化);shared:cn/错误码校验;api-client:login/fetchMe/my-items + 令牌存取
+  - Storybook 随批次二组件扩充时引入(v1 组件量少,以 main 页面实测代替组件文档)
+- [x] **T-131** main shell:顶部主导航(Gitee 式信息架构)+ 登录页(JWT 会话)+ 哈希路由骨架 · M ✅ 2026-10-10
+  - vite 代理 /api → 后端(CODEPLAN_BACKEND_URL 可配,默认 8081)
+  - fetchMe 会话恢复/登出/错误提示;e2e:登录→shell→工作台数据经代理返回 ✓
 - [ ] **T-132** 工作项页面:看板(dnd-kit 拖拽)/列表/树形 + 工作项详情(状态流转/评论) · L
 - [ ] **T-133** Wiki 页面(bytemd 编辑预览)+ 附件管理 · M
 - [ ] **T-134** 仓库页面:文件树浏览/提交历史/diff(shiki)/blame · L
