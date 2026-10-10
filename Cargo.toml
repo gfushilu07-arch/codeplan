@@ -23,10 +23,13 @@ openidconnect = { version = "4", features = ["reqwest"] }
 totp-rs = { version = "5", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+russh = "0.64.1"
+ssh-key = "0.6"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 thiserror = "2"
 toml = "0.9"
 utoipa = { version = "5", features = ["axum_extras"] }
+rand = "0.9"
 rand_core = { version = "0.9", features = ["os"] }
 sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "migrate", "chrono", "uuid"] }
 uuid = { version = "1", features = ["v4", "serde"] }

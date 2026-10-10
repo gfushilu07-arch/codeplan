@@ -10,6 +10,7 @@ pub mod browse_api;
 pub mod domain;
 pub mod infra;
 pub mod service;
+pub mod ssh;
 pub mod storage;
 pub mod transport;
 

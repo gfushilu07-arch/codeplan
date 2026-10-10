@@ -2,6 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use codeplan_common::define_id;
+use codeplan_common::error::AppError;
 use codeplan_kernel::ids::UserId;
 
 define_id!(
@@ -337,4 +338,58 @@ pub trait RbacStore: Send + Sync {
         kind: &str,
         resource_id: uuid::Uuid,
     ) -> Result<Vec<MemberEntry>, codeplan_common::error::AppError>;
+}
+
+/// SSH 公钥。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SshKey {
+    /// 密钥 ID。
+    pub id: uuid::Uuid,
+    /// 所属用户。
+    pub user_id: UserId,
+    /// 标题。
+    pub title: String,
+    /// 公钥内容(OpenSSH 一行格式)。
+    pub public_key: String,
+    /// SHA256 指纹(`SHA256:base64`)。
+    pub fingerprint: String,
+    /// 创建时间。
+    pub created_at: DateTime<Utc>,
+}
+
+/// SSH 公钥仓储抽象。
+#[async_trait::async_trait]
+pub trait SshKeyRepository: Send + Sync {
+    /// 添加公钥(指纹唯一冲突返回 `ORG-409`)。
+    ///
+    /// # Errors
+    /// 存储故障或指纹冲突。
+    async fn add(
+        &self,
+        user_id: UserId,
+        title: &str,
+        public_key: &str,
+        fingerprint: &str,
+    ) -> Result<SshKey, AppError>;
+
+    /// 用户的公钥列表。
+    ///
+    /// # Errors
+    /// 存储故障。
+    async fn list_for_user(&self, user_id: UserId) -> Result<Vec<SshKey>, AppError>;
+
+    /// 删除公钥(仅属主;返回是否删除)。
+    ///
+    /// # Errors
+    /// 存储故障。
+    async fn delete(&self, user_id: UserId, id: uuid::Uuid) -> Result<bool, AppError>;
+
+    /// 按指纹查用户(SSH 认证)。
+    ///
+    /// # Errors
+    /// 存储故障。
+    async fn user_by_fingerprint(
+        &self,
+        fingerprint: &str,
+    ) -> Result<Option<(UserId, String)>, AppError>;
 }

@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{Json, Router, routing::get};
+use russh::server::Server as _;
 use serde::Serialize;
 use utoipa::{OpenApi, ToSchema};
 
@@ -177,6 +178,56 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::clone(&notification_store),
     )));
 
+    // Git SSH 服务(T-201):russh,公钥认证 + exec git(默认 2222)
+    let ssh_port = env_or("CODEPLAN_SSH_PORT", "2322");
+    {
+        let ssh_deps = codeplan_git_service::ssh::SshDeps {
+            directory: Arc::new(codeplan_identity::infra::PgSshKeyStore::new(pool.clone())),
+            repos: Arc::new(codeplan_git_service::infra::PgRepositoryStore::new(
+                pool.clone(),
+            )),
+            authz: Arc::clone(&rbac) as Arc<dyn codeplan_kernel::authz::Authz>,
+            bare: Arc::clone(&bare_store) as Arc<dyn codeplan_git_service::domain::BareRepoStore>,
+        };
+        let host_key_path = std::path::PathBuf::from(format!("{data_dir}/ssh_host_ed25519"));
+        let repo_root_for_ssh = repo_root.clone();
+        tokio::spawn(async move {
+            let host_key =
+                match codeplan_git_service::ssh::load_or_generate_host_key(&host_key_path) {
+                    Ok(k) => k,
+                    Err(e) => {
+                        eprintln!("SSH 宿主密钥失败: {e}");
+                        return;
+                    }
+                };
+            let mut ssh_server = codeplan_git_service::ssh::SshServer {
+                deps: ssh_deps,
+                config: codeplan_git_service::ssh::SshConfig {
+                    addr: format!("0.0.0.0:{ssh_port}"),
+                    repo_root: repo_root_for_ssh,
+                },
+                host_keys: vec![host_key],
+            };
+            let config = Arc::new(russh::server::Config {
+                inactivity_timeout: Some(std::time::Duration::from_secs(3600)),
+                auth_rejection_time: std::time::Duration::from_secs(1),
+                keys: ssh_server.host_keys.clone(),
+                ..Default::default()
+            });
+            let listener = match tokio::net::TcpListener::bind(&ssh_server.config.addr).await {
+                Ok(l) => l,
+                Err(e) => {
+                    eprintln!("SSH 绑定失败: {e}");
+                    return;
+                }
+            };
+            println!("git SSH 服务监听 {}", ssh_server.config.addr);
+            if let Err(e) = ssh_server.run_on_socket(config, &listener).await {
+                eprintln!("SSH 服务退出: {e}");
+            }
+        });
+    }
+
     // project.created → identity 授予创建者 admin(T-111 闭环)
     if let Err(e) =
         codeplan_identity::listen::spawn_repo_created_grant(&nats_url, Arc::clone(&rbac)).await
@@ -250,6 +301,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         audit: Arc::new(codeplan_identity::infra::PgAuditSink::new(pool.clone())),
         event_bus: Arc::clone(&event_bus),
         users: Arc::clone(&users),
+        ssh_keys: Arc::new(codeplan_identity::infra::PgSshKeyStore::new(pool.clone())),
     };
 
     let mut app: Router = Router::new()

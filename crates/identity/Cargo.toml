@@ -19,6 +19,7 @@ codeplan-common = { workspace = true, features = ["axum"] }
 codeplan-kernel.workspace = true
 jsonwebtoken.workspace = true
 serde.workspace = true
+ssh-key.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
 tokio = { workspace = true, features = ["sync"] }

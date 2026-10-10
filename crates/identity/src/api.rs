@@ -30,6 +30,8 @@ pub struct AuthState {
     pub event_bus: Arc<dyn codeplan_kernel::events::EventBus>,
     /// 用户仓储(平台管理)。
     pub users: Arc<dyn crate::domain::UserRepository>,
+    /// SSH 公钥仓储。
+    pub ssh_keys: Arc<dyn crate::domain::SshKeyRepository>,
 }
 
 /// 身份域路由(挂载到 `/api`)。
@@ -47,6 +49,11 @@ pub fn routes() -> Router<AuthState> {
         .route("/api/rbac/members", axum::routing::get(rbac_members))
         .route("/api/rbac/my-role", axum::routing::get(rbac_my_role))
         .route("/api/admin/ldap/sync", axum::routing::post(ldap_sync))
+        .route(
+            "/api/keys/ssh",
+            axum::routing::get(list_ssh_keys).post(add_ssh_key),
+        )
+        .route("/api/keys/ssh/{id}", axum::routing::delete(delete_ssh_key))
         .route("/api/admin/audit", axum::routing::get(audit_recent))
         .route("/api/admin/users", axum::routing::get(admin_list_users))
         .route(
@@ -651,4 +658,79 @@ async fn audit_recent(
             })
             .collect(),
     )))
+}
+
+// ---------- SSH Key 管理(T-201) ----------
+
+/// SSH 公钥响应。
+#[derive(Debug, Serialize, ToSchema)]
+pub struct SshKeyResponse {
+    /// 密钥 ID。
+    pub id: String,
+    /// 标题。
+    pub title: String,
+    /// 指纹(SHA256)。
+    pub fingerprint: String,
+    /// 添加时间(RFC 3339)。
+    pub created_at: String,
+}
+
+/// 添加 SSH 公钥请求。
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct AddSshKeyRequest {
+    /// 标题。
+    pub title: String,
+    /// OpenSSH 公钥一行内容。
+    pub public_key: String,
+}
+
+async fn list_ssh_keys(
+    user: CurrentUser,
+    State(st): State<AuthState>,
+) -> Result<Json<ApiResponse<Vec<SshKeyResponse>>>, AppError> {
+    let keys = st.ssh_keys.list_for_user(user.id).await?;
+    Ok(Json(ApiResponse::ok(
+        keys.into_iter()
+            .map(|k| SshKeyResponse {
+                id: k.id.to_string(),
+                title: k.title,
+                fingerprint: k.fingerprint,
+                created_at: chrono::DateTime::to_rfc3339(&k.created_at),
+            })
+            .collect(),
+    )))
+}
+
+async fn add_ssh_key(
+    user: CurrentUser,
+    State(st): State<AuthState>,
+    Json(req): Json<AddSshKeyRequest>,
+) -> Result<Json<ApiResponse<SshKeyResponse>>, AppError> {
+    // 服务端解析公钥并计算 SHA256 指纹(与 ssh-keygen -lf 一致)
+    let parsed = ssh_key::PublicKey::from_openssh(&req.public_key)
+        .map_err(|_| AppError::invalid(DOMAIN_CODE, "公钥格式非法(须 OpenSSH 一行格式)"))?;
+    let fingerprint = parsed.fingerprint(ssh_key::HashAlg::Sha256).to_string();
+    let key = st
+        .ssh_keys
+        .add(user.id, &req.title, &req.public_key, &fingerprint)
+        .await?;
+    Ok(Json(ApiResponse::ok(SshKeyResponse {
+        id: key.id.to_string(),
+        title: key.title,
+        fingerprint: key.fingerprint,
+        created_at: chrono::DateTime::to_rfc3339(&key.created_at),
+    })))
+}
+
+async fn delete_ssh_key(
+    user: CurrentUser,
+    State(st): State<AuthState>,
+    axum::extract::Path(id): axum::extract::Path<uuid::Uuid>,
+) -> Result<Json<ApiResponse<()>>, AppError> {
+    st.ssh_keys.delete(user.id, id).await?;
+    Ok(Json(ApiResponse {
+        code: "OK".to_owned(),
+        message: "已删除".to_owned(),
+        data: None,
+    }))
 }

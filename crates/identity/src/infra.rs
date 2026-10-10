@@ -464,3 +464,128 @@ impl codeplan_kernel::audit::AuditSink for PgAuditSink {
         .map_err(|e| e.to_string())
     }
 }
+
+/// SSH 公钥仓储 PG 实现。
+#[derive(Clone)]
+pub struct PgSshKeyStore {
+    pool: PgPool,
+}
+
+impl PgSshKeyStore {
+    /// 构造。
+    #[must_use]
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl crate::domain::SshKeyRepository for PgSshKeyStore {
+    async fn add(
+        &self,
+        user_id: UserId,
+        title: &str,
+        public_key: &str,
+        fingerprint: &str,
+    ) -> Result<crate::domain::SshKey, AppError> {
+        let (id, created_at): (uuid::Uuid, DateTime<Utc>) = sqlx::query_as(
+            "INSERT INTO org_ssh_key (id, user_id, title, public_key, fingerprint) \
+             VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at",
+        )
+        .bind(uuid::Uuid::new_v4())
+        .bind(user_id.as_uuid())
+        .bind(title)
+        .bind(public_key)
+        .bind(fingerprint)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(unique_conflict)?;
+        Ok(crate::domain::SshKey {
+            id,
+            user_id,
+            title: title.to_owned(),
+            public_key: public_key.to_owned(),
+            fingerprint: fingerprint.to_owned(),
+            created_at,
+        })
+    }
+
+    async fn list_for_user(&self, user_id: UserId) -> Result<Vec<crate::domain::SshKey>, AppError> {
+        let rows: Vec<(uuid::Uuid, String, String, String, DateTime<Utc>)> = sqlx::query_as(
+            "SELECT id, title, public_key, fingerprint, created_at FROM org_ssh_key \
+             WHERE user_id = $1 ORDER BY created_at",
+        )
+        .bind(user_id.as_uuid())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| {
+            AppError::internal(DOMAIN_CODE).with_details(serde_json::json!(e.to_string()))
+        })?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(id, title, public_key, fingerprint, created_at)| crate::domain::SshKey {
+                    id,
+                    user_id,
+                    title,
+                    public_key,
+                    fingerprint,
+                    created_at,
+                },
+            )
+            .collect())
+    }
+
+    async fn delete(&self, user_id: UserId, id: uuid::Uuid) -> Result<bool, AppError> {
+        let result = sqlx::query("DELETE FROM org_ssh_key WHERE id = $1 AND user_id = $2")
+            .bind(id)
+            .bind(user_id.as_uuid())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                AppError::internal(DOMAIN_CODE).with_details(serde_json::json!(e.to_string()))
+            })?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    async fn user_by_fingerprint(
+        &self,
+        fingerprint: &str,
+    ) -> Result<Option<(UserId, String)>, AppError> {
+        let row: Option<(uuid::Uuid, String)> = sqlx::query_as(
+            "SELECT u.id, u.username FROM org_ssh_key k JOIN org_user u ON u.id = k.user_id \
+             WHERE k.fingerprint = $1",
+        )
+        .bind(fingerprint)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| {
+            AppError::internal(DOMAIN_CODE).with_details(serde_json::json!(e.to_string()))
+        })?;
+        Ok(row.map(|(id, username)| (UserId::from_uuid(id), username)))
+    }
+}
+
+/// kernel SshKeyDirectory 实现(SSH 服务认证目录)。
+#[async_trait]
+impl codeplan_kernel::authn::SshKeyDirectory for PgSshKeyStore {
+    async fn user_by_fingerprint(
+        &self,
+        fingerprint: &str,
+    ) -> Result<Option<codeplan_kernel::authn::SshKeyUser>, String> {
+        let row: Option<(uuid::Uuid, String)> = sqlx::query_as(
+            "SELECT u.id, u.username FROM org_ssh_key k JOIN org_user u ON u.id = k.user_id \
+             WHERE k.fingerprint = $1",
+        )
+        .bind(fingerprint)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(
+            row.map(|(id, username)| codeplan_kernel::authn::SshKeyUser {
+                user_id: UserId::from_uuid(id),
+                username,
+            }),
+        )
+    }
+}
