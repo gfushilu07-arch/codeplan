@@ -353,6 +353,19 @@ impl WorkItemRepository for PgWorkItemRepository {
         Ok(())
     }
 
+    async fn list_for_user(&self, user: UserId) -> Result<Vec<WorkItem>, AppError> {
+        let sql = format!(
+            "SELECT {ITEM_COLS} FROM proj_work_item \
+             WHERE assignee = $1 OR reporter = $1 ORDER BY updated_at DESC LIMIT 100"
+        );
+        let rows = sqlx::query_as::<_, ItemRow>(&sql)
+            .bind(user.as_uuid())
+            .fetch_all(&self.pool)
+            .await
+            .map_err(pm_internal)?;
+        rows.into_iter().map(WorkItem::try_from).collect()
+    }
+
     async fn set_board_positions(
         &self,
         positions: &[(crate::domain::WorkItemId, String, i64)],

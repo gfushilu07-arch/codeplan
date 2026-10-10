@@ -658,6 +658,14 @@ impl ProjectService {
         Ok(fields.merged_into(custom_fields))
     }
 
+    /// 工作台:与当前用户相关的工作项(assignee 或 reporter)。
+    ///
+    /// # Errors
+    /// 存储故障。
+    pub async fn my_items(&self, actor: &CurrentUser) -> Result<Vec<WorkItem>, AppError> {
+        self.items.list_for_user(actor.id).await
+    }
+
     async fn ensure(
         &self,
         actor: &CurrentUser,

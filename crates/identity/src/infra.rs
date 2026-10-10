@@ -148,6 +148,32 @@ impl UserRepository for PgUserRepository {
         Ok(())
     }
 
+    async fn list(&self) -> Result<Vec<User>, AppError> {
+        let rows = sqlx::query_as::<_, UserRow>(
+            "SELECT id, username, email, display_name, status, password_hash, source, totp_secret, \
+             totp_enabled, is_platform_admin, created_at, updated_at \
+             FROM org_user ORDER BY created_at",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| {
+            AppError::internal(DOMAIN_CODE).with_details(serde_json::json!(e.to_string()))
+        })?;
+        rows.into_iter().map(User::try_from).collect()
+    }
+
+    async fn set_status(&self, id: UserId, status: UserStatus) -> Result<(), AppError> {
+        sqlx::query("UPDATE org_user SET status = $2, updated_at = now() WHERE id = $1")
+            .bind(id.as_uuid())
+            .bind(status.as_str())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                AppError::internal(DOMAIN_CODE).with_details(serde_json::json!(e.to_string()))
+            })?;
+        Ok(())
+    }
+
     async fn find_by_email(&self, email: &str) -> Result<Option<User>, AppError> {
         let row = sqlx::query_as::<_, UserRow>(
             "SELECT id, username, email, display_name, status, password_hash, source, totp_secret, \

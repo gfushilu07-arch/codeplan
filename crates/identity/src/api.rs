@@ -28,6 +28,8 @@ pub struct AuthState {
     pub audit: Arc<crate::infra::PgAuditSink>,
     /// 事件总线(域发布领域事件用;T-111 起接入业务)。
     pub event_bus: Arc<dyn codeplan_kernel::events::EventBus>,
+    /// 用户仓储(平台管理)。
+    pub users: Arc<dyn crate::domain::UserRepository>,
 }
 
 /// 身份域路由(挂载到 `/api`)。
@@ -46,6 +48,118 @@ pub fn routes() -> Router<AuthState> {
         .route("/api/rbac/my-role", axum::routing::get(rbac_my_role))
         .route("/api/admin/ldap/sync", axum::routing::post(ldap_sync))
         .route("/api/admin/audit", axum::routing::get(audit_recent))
+        .route("/api/admin/users", axum::routing::get(admin_list_users))
+        .route(
+            "/api/admin/users/{id}/status",
+            axum::routing::post(admin_set_user_status),
+        )
+        .route(
+            "/api/dashboard/counts",
+            axum::routing::get(dashboard_counts),
+        )
+}
+
+/// 用户管理条目。
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AdminUserResponse {
+    /// 用户 ID。
+    pub id: String,
+    /// 登录名。
+    pub username: String,
+    /// 显示名。
+    pub display_name: String,
+    /// 邮箱。
+    pub email: String,
+    /// 状态:active/disabled。
+    pub status: String,
+    /// 来源:local/ldap/oidc。
+    pub source: String,
+    /// 是否平台管理员。
+    pub is_platform_admin: bool,
+}
+
+async fn admin_list_users(
+    user: Result<CurrentUser, AppError>,
+    State(st): State<AuthState>,
+) -> Result<Json<ApiResponse<Vec<AdminUserResponse>>>, AppError> {
+    let user = user?;
+    if !user.is_platform_admin {
+        return Err(AppError::forbidden(DOMAIN_CODE, "仅平台管理员"));
+    }
+    let users = st.users.list().await?;
+    Ok(Json(ApiResponse::ok(
+        users
+            .into_iter()
+            .map(|u| AdminUserResponse {
+                id: u.id.as_uuid().to_string(),
+                username: u.username,
+                display_name: u.display_name,
+                email: u.email,
+                status: u.status.as_str().to_owned(),
+                source: u.source.as_str().to_owned(),
+                is_platform_admin: u.is_platform_admin,
+            })
+            .collect(),
+    )))
+}
+
+/// 设置用户状态请求。
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct SetStatusRequest {
+    /// active/disabled。
+    pub status: String,
+}
+
+async fn admin_set_user_status(
+    user: Result<CurrentUser, AppError>,
+    State(st): State<AuthState>,
+    axum::extract::Path(id): axum::extract::Path<uuid::Uuid>,
+    Json(req): Json<SetStatusRequest>,
+) -> Result<Json<ApiResponse<()>>, AppError> {
+    let actor = user?;
+    if !actor.is_platform_admin {
+        return Err(AppError::forbidden(DOMAIN_CODE, "仅平台管理员"));
+    }
+    let status = crate::domain::UserStatus::from_str_opt(&req.status)
+        .ok_or_else(|| AppError::invalid(DOMAIN_CODE, format!("非法状态:{}", req.status)))?;
+    if id == actor.id.as_uuid() && status == crate::domain::UserStatus::Disabled {
+        return Err(AppError::invalid(DOMAIN_CODE, "不能禁用自己"));
+    }
+    st.users
+        .set_status(codeplan_kernel::ids::UserId::from_uuid(id), status)
+        .await?;
+    Ok(Json(ApiResponse {
+        code: "OK".to_owned(),
+        message: "状态已更新".to_owned(),
+        data: None,
+    }))
+}
+
+/// 工作台计数查询参数(空)。
+#[derive(Debug, Deserialize, IntoParams)]
+pub struct DashboardCountsQuery {}
+
+/// 工作台聚合计数(T-124;工作项计数经 eventbus/前端聚合,这里给身份侧)。
+#[utoipa::path(
+    get,
+    path = "/api/dashboard/counts",
+    responses((status = 200))
+)]
+async fn dashboard_counts(
+    user: Result<CurrentUser, AppError>,
+    State(st): State<AuthState>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let user = user?;
+    let users = st.users.list().await?;
+    Ok(Json(serde_json::json!({
+        "code": "OK",
+        "data": {
+            "user_id": user.id.as_uuid(),
+            "display_name": user.display_name,
+            "platform_users": users.len(),
+            "is_platform_admin": user.is_platform_admin,
+        }
+    })))
 }
 
 /// 登录请求。

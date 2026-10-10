@@ -54,6 +54,7 @@ pub fn routes(state: ProjectState) -> Router<ProjectState> {
         .route("/api/projects/{key}/board", get(board_view))
         .route("/api/projects/{key}/board/reorder", put(board_reorder))
         .route("/api/projects/{key}/items/tree", get(items_tree))
+        .route("/api/dashboard/my-items", get(my_items))
         .layer(middleware::from_fn_with_state(state, auth_mw))
 }
 
@@ -803,4 +804,43 @@ async fn items_tree(
 ) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
     let tree = st.svc.items_tree(&user, &key).await?;
     Ok(Json(ApiResponse::ok(serde_json::Value::Array(tree))))
+}
+
+/// 我的工作项条目。
+#[derive(Debug, Serialize, ToSchema)]
+pub struct MyItemResponse {
+    /// 工作项 ID。
+    pub id: String,
+    /// 类型。
+    pub item_type: String,
+    /// 标题。
+    pub title: String,
+    /// 状态。
+    pub status: String,
+    /// 项目 ID。
+    pub project_id: String,
+    /// 更新时间(RFC 3339)。
+    pub updated_at: String,
+}
+
+/// 工作台:与我相关的工作项。
+#[utoipa::path(get, path = "/api/dashboard/my-items", responses((status = 200)))]
+async fn my_items(
+    Extension(user): Extension<CurrentUser>,
+    State(st): State<ProjectState>,
+) -> Result<Json<ApiResponse<Vec<MyItemResponse>>>, AppError> {
+    let items = st.svc.my_items(&user).await?;
+    Ok(Json(ApiResponse::ok(
+        items
+            .into_iter()
+            .map(|i| MyItemResponse {
+                id: i.id.as_uuid().to_string(),
+                item_type: i.item_type.as_str().to_owned(),
+                title: i.title,
+                status: i.status,
+                project_id: i.project_id.as_uuid().to_string(),
+                updated_at: chrono::DateTime::to_rfc3339(&i.updated_at),
+            })
+            .collect(),
+    )))
 }

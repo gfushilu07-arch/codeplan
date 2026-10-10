@@ -291,6 +291,12 @@ pub trait WorkItemRepository: Send + Sync {
         &self,
         positions: &[(WorkItemId, String, i64)],
     ) -> Result<(), AppError>;
+
+    /// 跨项目按人聚合(工作台):assignee 或 reporter 为该用户。
+    ///
+    /// # Errors
+    /// 存储故障。
+    async fn list_for_user(&self, user: UserId) -> Result<Vec<WorkItem>, AppError>;
 }
 
 /// 迭代状态。

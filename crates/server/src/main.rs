@@ -44,6 +44,14 @@ async fn openapi_json() -> Json<serde_json::Value> {
     Json(build_openapi())
 }
 
+/// 平台摘要指标(T-123;Prometheus 抓取经外部 exporter 转换)。
+async fn metrics_summary() -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "status": "ok",
+        "note": "平台计数见 /api/dashboard/counts;进程指标由 OTel 采集"
+    }))
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 数据库(迁移 + 连接池)
@@ -240,11 +248,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         rbac,
         ldap: directory,
         audit: Arc::new(codeplan_identity::infra::PgAuditSink::new(pool.clone())),
-        event_bus,
+        event_bus: Arc::clone(&event_bus),
+        users: Arc::clone(&users),
     };
 
     let mut app: Router = Router::new()
         .route("/api/health", get(health))
+        .route("/api/metrics/summary", get(metrics_summary))
         .route("/api/docs/openapi.json", get(openapi_json))
         .merge(codeplan_identity::api::routes().with_state(state.clone()));
     if state.oidc.is_some() {

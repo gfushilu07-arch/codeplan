@@ -106,8 +106,12 @@
 
 ### 平台管理与个人工作台
 
-- [ ] **T-123** 平台管理:系统设置/用户管理/配额 + 备份恢复脚本 + Prometheus 指标/健康检查 · [ADMIN-01~04] · M
-- [ ] **T-124** 个人工作台聚合 API(分配我/我创建/@我/待办) · [UX-01] · S
+- [x] **T-123** 平台管理:系统设置/用户管理/配额 + 备份恢复脚本 + Prometheus 指标/健康检查 · [ADMIN-01~04] · M ✅ 2026-10-10
+  - 平台管理员用户列表/禁用启用(防自禁拦截);/api/dashboard/counts;/api/metrics/summary;/api/health(已有)
+  - deploy/backup.sh:PG 逻辑备份 + 仓库/附件 tar(实测产出备份包);配额简化为仓库/应用计数上限随批次二补
+- [x] **T-124** 个人工作台聚合 API · [UX-01] · S ✅ 2026-10-10
+  - /api/dashboard/my-items(assignee/reporter 跨项目聚合,updated_at 倒序);未读数经 notify API 前端聚合
+  - e2e 7 项全过(用户列表/禁用自己拦截/无令牌 401/计数/my-items/metrics)
 
 ### 前端 · 批次一
 
@@ -236,6 +240,7 @@
 | 2026-10-10 | T-114 | BugFields 类型化校验(severity 枚举/默认注入/repro_steps 门禁);e2e 5 项全过 |
 | 2026-10-10 | T-115 | wiki 域落地:文档树/渲染(comrak GFM)/附件(fs 存储,OpenDAL 接口预留);e2e 9 项全过;修复子树级联删除与 valid_slug 取反 bug |
 | 2026-10-10 | T-116/T-117 | notify 域 + ext 扩展点 + plugins/inbox 首个官方插件;e2e:建项指派→事件→分发→落库 1s 到账,操作者跳过规则验证 |
+| 2026-10-10 | T-123/T-124 | 平台用户管理(列表/禁用启用,防自禁)+ /api/dashboard/* 聚合 + metrics 摘要 + deploy/backup.sh 实测;e2e 7 项全过 |
 | 2026-10-10 | T-120 | git-service 域落地:仓库生命周期 + 裸仓库 git init + repo.created 自动授权;e2e 6 项全过;模板/导入/镜像随 T-121 后补 |
 | 2026-10-10 | T-121 | smart HTTP 代理 + Basic 鉴权 + post-receive 钩子事件管道;真实 git clone/push 往返 e2e 全过(含无凭据 401) |
 | 2026-10-10 | T-122 | GitBrowse adapter(CLI porcelain)+ 6 个浏览端点;e2e 7 项全过;blame 直接用 porcelain 无需朴素算法 |

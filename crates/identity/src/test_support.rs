@@ -112,6 +112,24 @@ impl UserRepository for InMemoryUserRepository {
         Ok(i64::try_from(self.users.lock().expect("锁").len()).unwrap_or(0))
     }
 
+    async fn list(&self) -> Result<Vec<User>, AppError> {
+        Ok(self.users.lock().expect("锁").clone())
+    }
+
+    async fn set_status(&self, id: UserId, status: UserStatus) -> Result<(), AppError> {
+        if let Some(u) = self
+            .users
+            .lock()
+            .expect("锁")
+            .iter_mut()
+            .find(|u| u.id == id)
+        {
+            u.status = status;
+            u.updated_at = codeplan_common::time::now();
+        }
+        Ok(())
+    }
+
     async fn find_by_email(&self, email: &str) -> Result<Option<User>, AppError> {
         Ok(self
             .users

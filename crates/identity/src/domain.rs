@@ -158,6 +158,22 @@ pub trait UserRepository: Send + Sync {
     /// 存储故障。
     async fn count(&self) -> Result<i64, codeplan_common::error::AppError>;
 
+    /// 全量用户列表(平台管理,ORG-01)。
+    ///
+    /// # Errors
+    /// 存储故障。
+    async fn list(&self) -> Result<Vec<User>, codeplan_common::error::AppError>;
+
+    /// 启用/禁用用户。
+    ///
+    /// # Errors
+    /// 存储故障。
+    async fn set_status(
+        &self,
+        id: UserId,
+        status: UserStatus,
+    ) -> Result<(), codeplan_common::error::AppError>;
+
     /// 按邮箱查询(OIDC JIT 开通用)。
     ///
     /// # Errors
