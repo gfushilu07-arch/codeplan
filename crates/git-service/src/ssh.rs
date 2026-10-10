@@ -309,10 +309,13 @@ impl russh::server::Handler for SshHandler {
             });
         }
 
-        // 子进程退出 watcher(仅记录日志;通道由客户端关闭,避免过早截断数据)
+        // 子进程退出 watcher:exit 后发送 eof 并关闭通道
+        let ssh_handle = session.handle();
         tokio::spawn(async move {
             let status = child.wait().await;
             eprintln!("[ssh] 子进程退出({status:?})");
+            let _ = ssh_handle.eof(channel).await;
+            let _ = ssh_handle.close(channel).await;
         });
         Ok(())
     }
