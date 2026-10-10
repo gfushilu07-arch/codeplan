@@ -171,6 +171,48 @@ impl GitService {
         self.repos.set_archived(repo.id, archived).await
     }
 
+    /// 权限检查透传(HTTP 传输用)。
+    ///
+    /// # Errors
+    /// 无权限 `GIT-403`;后端故障。
+    pub async fn ensure_action(
+        &self,
+        actor: &CurrentUser,
+        action: Action,
+        reference: &ResourceRef,
+    ) -> Result<(), AppError> {
+        self.authz
+            .check(actor.id, action, reference)
+            .await
+            .map_err(|e| AppError::internal(DOMAIN_CODE).with_details(serde_json::json!(e)))?
+            .then_some(())
+            .ok_or_else(|| AppError::forbidden(DOMAIN_CODE, "无权限执行该操作"))
+    }
+
+    /// 发布 `commit.pushed`(post-receive 钩子回调;refs 为钩子原始行)。
+    ///
+    /// # Errors
+    /// 仓库不存在 `GIT-404`;事件发布失败。
+    pub async fn publish_push(&self, full_name: &str, refs: &[String]) -> Result<(), AppError> {
+        let repo = self
+            .repos
+            .find_by_full_name(full_name)
+            .await?
+            .ok_or_else(|| AppError::not_found(DOMAIN_CODE, "仓库不存在"))?;
+        self.events
+            .publish(vec![EventEnvelope::new(
+                "commit.pushed",
+                json!({
+                    "repo_id": repo.id.as_uuid(),
+                    "full_name": repo.full_name,
+                    "default_branch": repo.default_branch,
+                    "refs": refs,
+                }),
+            )])
+            .await
+            .map_err(|e| AppError::internal(DOMAIN_CODE).with_details(serde_json::json!(e)))
+    }
+
     async fn ensure(
         &self,
         actor: &CurrentUser,

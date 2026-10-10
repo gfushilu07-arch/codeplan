@@ -137,9 +137,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "{data_dir}/attachments"
     )));
     // Git 代码域(T-120)
-    let bare_store = Arc::new(codeplan_git_service::storage::FsBareRepoStore::new(
-        format!("{data_dir}/repositories"),
-    ));
+    let hook_secret = env_or("CODEPLAN_HOOK_SECRET", "dev-hook-secret");
+    let repo_root = format!("{data_dir}/repositories");
+    let bare_store = Arc::new(
+        codeplan_git_service::storage::FsBareRepoStore::new(repo_root.clone()).with_hook(
+            codeplan_git_service::storage::HookConfig {
+                url: env_or("CODEPLAN_PUBLIC_URL", "http://localhost:8080"),
+                secret: hook_secret.clone(),
+            },
+        ),
+    );
 
     let wiki_state = codeplan_wiki::api::WikiState {
         svc: Arc::new(codeplan_wiki::service::WikiService::new(
@@ -212,7 +219,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         authn: Arc::clone(&auth) as Arc<dyn codeplan_kernel::authn::TokenAuthenticator>,
     };
 
-    // Git 代码域状态(T-120)
+    // Git 代码域状态(T-120/T-121)
     let git_state = codeplan_git_service::api::GitState {
         svc: Arc::new(codeplan_git_service::service::GitService::new(
             Arc::new(codeplan_git_service::infra::PgRepositoryStore::new(
@@ -223,10 +230,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Arc::clone(&event_bus),
         )),
         authn: Arc::clone(&auth) as Arc<dyn codeplan_kernel::authn::TokenAuthenticator>,
+        repo_root: repo_root.clone(),
+        hook_secret: hook_secret.clone(),
     };
 
     let state = codeplan_identity::api::AuthState {
-        auth,
+        auth: Arc::clone(&auth),
         oidc,
         rbac,
         ldap: directory,
@@ -244,8 +253,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     app = app.merge(codeplan_project::api::routes(project_state.clone()).with_state(project_state));
     app = app.merge(codeplan_wiki::api::routes(wiki_state.clone()).with_state(wiki_state));
 
-    // Git 仓库路由(T-120;http 传输与浏览随 T-121/122 挂载)
-    app = app.merge(codeplan_git_service::api::routes(git_state.clone()).with_state(git_state));
+    // Git 仓库路由(T-120)+ smart HTTP 传输(T-121)
+    app = app
+        .merge(codeplan_git_service::api::routes(git_state.clone()).with_state(git_state.clone()));
+    let transport_state = codeplan_git_service::transport::TransportState {
+        svc: git_state.svc.clone(),
+        authn: Arc::clone(&auth) as Arc<dyn codeplan_kernel::authn::TokenAuthenticator>,
+        repo_root: repo_root.clone(),
+        hook_secret: hook_secret.clone(),
+    };
+    app = app.merge(
+        codeplan_git_service::transport::routes(transport_state.clone())
+            .with_state(transport_state),
+    );
     app = app.merge(codeplan_notify::api::routes(notify_state.clone()).with_state(notify_state));
 
     let addr = env_or("CODEPLAN_ADDR", "0.0.0.0:8080");

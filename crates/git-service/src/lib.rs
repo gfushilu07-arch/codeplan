@@ -9,6 +9,7 @@ pub mod domain;
 pub mod infra;
 pub mod service;
 pub mod storage;
+pub mod transport;
 
 /// 域错误码前缀(`GIT-xxx`)。
 pub const DOMAIN_CODE: &str = "GIT";

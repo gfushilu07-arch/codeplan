@@ -24,6 +24,10 @@ pub struct GitState {
     pub svc: Arc<GitService>,
     /// 令牌认证器。
     pub authn: Arc<dyn TokenAuthenticator>,
+    /// 仓库根(GIT_PROJECT_ROOT,http-backend 用)。
+    pub repo_root: String,
+    /// 内部钩子密钥(post-receive 回调校验)。
+    pub hook_secret: String,
 }
 
 /// 路由。
