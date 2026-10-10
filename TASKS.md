@@ -11,7 +11,7 @@
 | 阶段 | 任务数 | 已完成 | 进行中 | 状态 |
 |---|---|---|---|---|
 | 阶段 0 · 工程基建 | 7 | 7 | 0 | ✅ 完成 |
-| 批次一 · 基座 | 20 | 14 | 0 | 🔄 进行中 |
+| 批次一 · 基座 | 20 | 15 | 0 | 🔄 进行中 |
 | 批次二 · 协作 | 15 | 0 | 0 | ⬜ 未开始 |
 | 批次三 · 流水线 | 18 | 0 | 0 | ⬜ 未开始 |
 | 批次四 · 发布与智能 | 18 | 0 | 0 | ⬜ 未开始 |
@@ -95,7 +95,12 @@
 
 ### Git 基础
 
-- [ ] **T-120** git-service:仓库生命周期(创建/删除/元数据/模板)+ 裸仓库管理 · [GIT-01] · M
+- [x] **T-120** git-service:仓库生命周期(创建/删除/元数据/模板)+ 裸仓库管理 · [GIT-01] · M ✅ 2026-10-10
+  - 新增 L3 域 crate codeplan-git-service(domain/infra/service/api/storage)
+  - repo_repository 元数据表(迁移 0011)+ 裸仓库 git init --bare -b <分支>(<data>/repositories/{owner}/{key}.git)
+  - 创建失败回滚(元数据归档);归档语义 = 软删除(DELETE API → archived,404 隐藏,物理保留)
+  - repo.created → identity 监听自动授予创建者 repo admin(事件闭环)
+  - 模板仓库与导入/镜像延后(T-121 传输层落地后实现);e2e 6 项全过
 - [ ] **T-121** Git smart HTTP:鉴权 + `http-backend` CGI 代理 + post-receive hook 事件管道(commit.pushed) · [GIT-02] · L
 - [ ] **T-122** 代码浏览:gix 读路径(文件树/README/提交历史/diff/blame)+ GitRepo adapter · [GIT-04] · L
 
@@ -231,3 +236,4 @@
 | 2026-10-10 | T-114 | BugFields 类型化校验(severity 枚举/默认注入/repro_steps 门禁);e2e 5 项全过 |
 | 2026-10-10 | T-115 | wiki 域落地:文档树/渲染(comrak GFM)/附件(fs 存储,OpenDAL 接口预留);e2e 9 项全过;修复子树级联删除与 valid_slug 取反 bug |
 | 2026-10-10 | T-116/T-117 | notify 域 + ext 扩展点 + plugins/inbox 首个官方插件;e2e:建项指派→事件→分发→落库 1s 到账,操作者跳过规则验证 |
+| 2026-10-10 | T-120 | git-service 域落地:仓库生命周期 + 裸仓库 git init + repo.created 自动授权;e2e 6 项全过;模板/导入/镜像随 T-121 后补 |

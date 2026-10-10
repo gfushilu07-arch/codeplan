@@ -33,6 +33,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 codeplan-common = { path = "crates/common" }
 comrak = "0.39"
 codeplan-eventbus = { path = "crates/eventbus" }
+codeplan-git-service = { path = "crates/git-service" }
 codeplan-identity = { path = "crates/identity" }
 codeplan-wiki = { path = "crates/wiki" }
 codeplan-project = { path = "crates/project" }

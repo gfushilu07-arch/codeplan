@@ -41,6 +41,7 @@ const L4: &[&str] = &[
     "eventbus",
     "project",
     "wiki",
+    "git-service",
     // 官方内置插件(随任务追加)
     "plugin-inbox",
 ];

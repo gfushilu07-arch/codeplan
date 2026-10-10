@@ -1,0 +1,189 @@
+//! Git 域用例:仓库生命周期(创建/归档/设置)+ 权限 + 事件。
+
+use std::sync::Arc;
+
+use codeplan_common::error::AppError;
+use codeplan_kernel::authz::{Action, Authz, ResourceRef};
+use codeplan_kernel::events::EventEnvelope;
+use codeplan_kernel::identity::CurrentUser;
+use serde_json::json;
+
+use crate::DOMAIN_CODE;
+use crate::domain::{BareRepoStore, NewRepository, Repository, RepositoryRepository};
+
+/// Git 域服务。
+pub struct GitService {
+    repos: Arc<dyn RepositoryRepository>,
+    bare: Arc<dyn BareRepoStore>,
+    authz: Arc<dyn Authz>,
+    events: Arc<dyn codeplan_kernel::events::EventBus>,
+}
+
+/// 仓库键规则:小写字母/数字/连字符,2~64 位。
+#[must_use]
+pub fn valid_repo_key(key: &str) -> bool {
+    let bytes = key.as_bytes();
+    (2..=64).contains(&bytes.len())
+        && bytes
+            .iter()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'-')
+}
+
+impl GitService {
+    /// 构造。
+    #[must_use]
+    pub fn new(
+        repos: Arc<dyn RepositoryRepository>,
+        bare: Arc<dyn BareRepoStore>,
+        authz: Arc<dyn Authz>,
+        events: Arc<dyn codeplan_kernel::events::EventBus>,
+    ) -> Self {
+        Self {
+            repos,
+            bare,
+            authz,
+            events,
+        }
+    }
+
+    /// 创建仓库:元数据 + 裸仓库 + `repo.created` 事件(identity 监听授予创建者 admin)。
+    ///
+    /// # Errors
+    /// key 非法 `GIT-400`;冲突 `GIT-409`;无项目权限 `GIT-403`;git 初始化失败 `GIT-500`。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_repository(
+        &self,
+        actor: &CurrentUser,
+        owner_key: &str,
+        key: &str,
+        name: &str,
+        description: &str,
+        visibility: crate::domain::Visibility,
+        default_branch: &str,
+        project_id: Option<codeplan_kernel::ids::ProjectId>,
+    ) -> Result<Repository, AppError> {
+        if !valid_repo_key(key) {
+            return Err(AppError::invalid(
+                DOMAIN_CODE,
+                "仓库键须为小写字母/数字/连字符,2~64 位",
+            ));
+        }
+        if let Some(pid) = project_id {
+            let reference = ResourceRef::Project(pid);
+            self.authz
+                .check(actor.id, Action::Write, &reference)
+                .await
+                .map_err(|e| AppError::internal(DOMAIN_CODE).with_details(serde_json::json!(e)))?
+                .then_some(())
+                .ok_or_else(|| AppError::forbidden(DOMAIN_CODE, "无项目写权限,无法关联仓库"))?;
+        }
+        let full_name = format!("{owner_key}/{key}");
+        let new = NewRepository {
+            key: key.to_owned(),
+            name: name.to_owned(),
+            description: description.to_owned(),
+            visibility,
+            default_branch: default_branch.to_owned(),
+            owner: actor.id,
+            project_id,
+        };
+        let repo = self.repos.create(&new, &full_name).await?;
+        if let Err(e) = self.bare.init_bare(&full_name, &repo.default_branch).await {
+            // 裸仓库初始化失败:归档元数据保持一致(不做物理删除,人工可查)
+            let _ = self.repos.set_archived(repo.id, true).await;
+            return Err(AppError::internal(DOMAIN_CODE).with_details(serde_json::json!(e)));
+        }
+        let _ = self
+            .events
+            .publish(vec![
+                EventEnvelope::new(
+                    "repo.created",
+                    json!({
+                        "repo_id": repo.id.as_uuid(),
+                        "full_name": repo.full_name,
+                        "creator_id": actor.id.as_uuid(),
+                    }),
+                )
+                .with_actor(actor.id.as_uuid().to_string()),
+            ])
+            .await;
+        Ok(repo)
+    }
+
+    /// 仓库列表(未归档)。
+    ///
+    /// # Errors
+    /// 存储故障。
+    pub async fn list_repositories(&self) -> Result<Vec<Repository>, AppError> {
+        Ok(self
+            .repos
+            .list()
+            .await?
+            .into_iter()
+            .filter(|r| !r.archived)
+            .collect())
+    }
+
+    /// 按全名取仓库(归档的返回 Err)。
+    ///
+    /// # Errors
+    /// 不存在或已归档 `GIT-404`。
+    pub async fn repository_by_full_name(&self, full_name: &str) -> Result<Repository, AppError> {
+        let repo = self
+            .repos
+            .find_by_full_name(full_name)
+            .await?
+            .ok_or_else(|| AppError::not_found(DOMAIN_CODE, "仓库不存在"))?;
+        if repo.archived {
+            return Err(AppError::not_found(DOMAIN_CODE, "仓库已归档"));
+        }
+        Ok(repo)
+    }
+
+    /// 设置默认分支(需要仓库管理权限)。
+    ///
+    /// # Errors
+    /// 无权限 `GIT-403`;分支名非法 `GIT-400`。
+    pub async fn set_default_branch(
+        &self,
+        actor: &CurrentUser,
+        repo: &Repository,
+        branch: &str,
+    ) -> Result<(), AppError> {
+        if branch.is_empty() || branch.contains(' ') || branch.starts_with('-') {
+            return Err(AppError::invalid(DOMAIN_CODE, "非法分支名"));
+        }
+        self.ensure(actor, Action::Admin, repo).await?;
+        self.repos.set_default_branch(repo.id, branch).await
+    }
+
+    /// 归档/恢复(需要仓库管理权限;归档保留裸仓库)。
+    ///
+    /// # Errors
+    /// 无权限 `GIT-403`。
+    pub async fn set_archived(
+        &self,
+        actor: &CurrentUser,
+        repo: &Repository,
+        archived: bool,
+    ) -> Result<(), AppError> {
+        self.ensure(actor, Action::Admin, repo).await?;
+        self.repos.set_archived(repo.id, archived).await
+    }
+
+    async fn ensure(
+        &self,
+        actor: &CurrentUser,
+        action: Action,
+        repo: &Repository,
+    ) -> Result<(), AppError> {
+        let reference =
+            ResourceRef::Repo(codeplan_kernel::ids::RepoId::from_uuid(repo.id.as_uuid()));
+        self.authz
+            .check(actor.id, action, &reference)
+            .await
+            .map_err(|e| AppError::internal(DOMAIN_CODE).with_details(serde_json::json!(e)))?
+            .then_some(())
+            .ok_or_else(|| AppError::forbidden(DOMAIN_CODE, "无权限执行该操作"))
+    }
+}

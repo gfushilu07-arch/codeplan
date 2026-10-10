@@ -68,3 +68,55 @@ pub async fn spawn_project_created_grant(
     });
     Ok(())
 }
+
+/// 订阅 `codeplan.events.repo.created`,给创建者授予仓库 admin 角色。
+///
+/// # Errors
+/// 仅在 NATS 订阅建立失败时返回。
+pub async fn spawn_repo_created_grant(
+    nats_url: &str,
+    rbac: Arc<RbacService>,
+) -> Result<(), String> {
+    let client = async_nats::connect(nats_url)
+        .await
+        .map_err(|e| format!("NATS 连接失败({nats_url}): {e}"))?;
+    let mut sub = client
+        .subscribe("codeplan.events.repo.created")
+        .await
+        .map_err(|e| e.to_string())?;
+    println!("identity:已订阅 repo.created(自动授予创建者 admin)");
+    tokio::spawn(async move {
+        while let Some(msg) = sub.next().await {
+            let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&msg.payload) else {
+                continue;
+            };
+            let field = |key: &str| -> Option<String> {
+                payload
+                    .get("payload")
+                    .and_then(|p| p.get(key))
+                    .or_else(|| payload.get(key))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_owned)
+            };
+            let (Some(repo_id), Some(creator)) = (
+                field("repo_id").and_then(|s| uuid::Uuid::parse_str(&s).ok()),
+                field("creator_id").and_then(|s| uuid::Uuid::parse_str(&s).ok()),
+            ) else {
+                continue;
+            };
+            if let Err(e) = rbac
+                .store
+                .grant(
+                    UserId::from_uuid(creator),
+                    "repo",
+                    repo_id,
+                    ResourceRole::Admin,
+                )
+                .await
+            {
+                eprintln!("repo.created 授权失败: {}", e.message());
+            }
+        }
+    });
+    Ok(())
+}

@@ -11,6 +11,7 @@ path = "src/main.rs"
 [dependencies]
 axum.workspace = true
 codeplan-eventbus.workspace = true
+codeplan-git-service.workspace = true
 codeplan-project.workspace = true
 codeplan-plugin-inbox.workspace = true
 codeplan-ext.workspace = true
