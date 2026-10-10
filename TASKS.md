@@ -127,7 +127,10 @@
   - features/wiki:树侧栏(嵌套渲染/新建)+ 页面查看(服务端 HTML)/编辑(前端简渲染预览,保存后以服务端为准)+ 删除(级联)
   - api-client:wikiTree/fetchWikiPage/create/update/delete/uploadAttachment
   - e2e 经 vite 代理:建页+取页(HTML 渲染正确)✓;附件上传下载 UI 随批次二补(后端/接口已备)
-- [ ] **T-134** 仓库页面:文件树浏览/提交历史/diff(shiki)/blame · L
+- [x] **T-134** 仓库页面:文件树浏览/提交历史/diff(shiki)/blame · L ✅ 2026-10-10
+  - features/repo:文件/提交双 Tab,文件树点击预览 blob(等宽字体),提交列表(OID 截断/作者/日期),克隆地址展示
+  - api-client:repoTree/repoCommits/repoBlob;diff(shiki 高亮)/blame UI 随批次二(后端 API 已备)
+  - e2e 经 vite 代理:树/历史/接口全通;build/lint/test 全绿
 - [ ] **T-135** 个人工作台页 + 管理页(用户/组织/审计) · M
 
 **批次一出口自检**:10 人团队跑完一个完整迭代;代码可 clone/push;一个官方插件经扩展点接入成功。

@@ -292,3 +292,73 @@ export async function uploadAttachment(
   const body = (await res.json()) as { data: { id: string; filename: string; size_bytes: number } };
   return body.data;
 }
+
+
+// ---------- 代码浏览(T-122/T-134) ----------
+
+/** 树条目。 */
+export interface RepoTreeEntry {
+  name: string;
+  kind: "tree" | "blob";
+  oid: string;
+  size?: number;
+}
+
+/** 提交条目。 */
+export interface RepoCommit {
+  id: string;
+  summary: string;
+  author_name: string;
+  author_email: string;
+  time: number;
+}
+
+/** GET /api/repos/{owner}/{key}/tree */
+export async function repoTree(
+  owner: string,
+  key: string,
+  reference: string,
+  path = "",
+  baseUrl = "",
+): Promise<RepoTreeEntry[]> {
+  const res = await fetch(
+    `${baseUrl}/api/repos/${owner}/${key}/tree?ref=${encodeURIComponent(reference)}&path=${encodeURIComponent(path)}`,
+    { headers: { Authorization: `Bearer ${getToken() ?? ""}` } },
+  );
+  if (!res.ok) throw new ApiError("GIT-404", res.statusText, res.status);
+  const body = (await res.json()) as { data: RepoTreeEntry[] };
+  return body.data;
+}
+
+/** GET /api/repos/{owner}/{key}/commits */
+export async function repoCommits(
+  owner: string,
+  key: string,
+  reference: string,
+  limit = 50,
+  baseUrl = "",
+): Promise<RepoCommit[]> {
+  const res = await fetch(
+    `${baseUrl}/api/repos/${owner}/${key}/commits?ref=${encodeURIComponent(reference)}&limit=${limit}`,
+    { headers: { Authorization: `Bearer ${getToken() ?? ""}` } },
+  );
+  if (!res.ok) throw new ApiError("GIT-404", res.statusText, res.status);
+  const body = (await res.json()) as { data: RepoCommit[] };
+  return body.data;
+}
+
+/** GET /api/repos/{owner}/{key}/blob */
+export async function repoBlob(
+  owner: string,
+  key: string,
+  reference: string,
+  path: string,
+  baseUrl = "",
+): Promise<string> {
+  const res = await fetch(
+    `${baseUrl}/api/repos/${owner}/${key}/blob?ref=${encodeURIComponent(reference)}&path=${encodeURIComponent(path)}`,
+    { headers: { Authorization: `Bearer ${getToken() ?? ""}` } },
+  );
+  if (!res.ok) throw new ApiError("GIT-404", res.statusText, res.status);
+  return res.text();
+}

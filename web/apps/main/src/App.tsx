@@ -6,6 +6,7 @@ import { Shell } from "./Shell";
 import { WorkbenchPage } from "./WorkbenchPage";
 import { BoardViewPage } from "@codeplan/feature-workitem";
 import { WikiPageView } from "@codeplan/feature-wiki";
+import { RepoPage } from "@codeplan/feature-repo";
 
 /** 应用根:未登录显示登录页,已登录进入外壳。 */
 export function App() {
@@ -51,7 +52,8 @@ export function App() {
     <Shell me={me} route={route} onLogout={handleLogout}>
       {route === "/projects" && <BoardViewPage />}
       {route === "/wiki" && <WikiRoute />}
-      {route !== "/projects" && route !== "/wiki" && <WorkbenchPage />}
+      {route === "/repos" && <RepoRoute />}
+      {route !== "/projects" && route !== "/wiki" && route !== "/repos" && <WorkbenchPage />}
     </Shell>
   );
 }
@@ -69,4 +71,25 @@ function WikiRoute() {
   }, []);
   if (!projectId) return <div style={{ color: "var(--cp-color-text-muted)" }}>暂无项目</div>;
   return <WikiPageView projectId={projectId} />;
+}
+
+/** 仓库路由包装:项目选择(取 CP 键演示,完整选择器随管理页)。 */
+function RepoRoute() {
+  const [projects, setProjects] = useState<Array<{ id: string; key: string }> | null>(null);
+  useEffect(() => {
+    import("@codeplan/api-client")
+      .then(({ listProjects }) => listProjects().then(setProjects))
+      .catch(() => setProjects([]));
+  }, []);
+  if (!projects || projects.length === 0) {
+    return <div style={{ color: "var(--cp-color-text-muted)" }}>暂无项目</div>;
+  }
+  // v1:仓库固定挂在 admin 命名空间(owner 键暂以登录名占位,见 T-120 API)
+  return (
+    <RepoPage
+      owner="admin"
+      repoKey="demo"
+      defaultBranch="main"
+    />
+  );
 }
