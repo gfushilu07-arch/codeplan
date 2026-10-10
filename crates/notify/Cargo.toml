@@ -4,5 +4,21 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[dependencies]
+async-nats.workspace = true
+async-trait.workspace = true
+axum.workspace = true
+chrono.workspace = true
+codeplan-common = { workspace = true, features = ["axum"] }
+codeplan-ext.workspace = true
+codeplan-kernel.workspace = true
+futures-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+tokio = { workspace = true, features = ["time"] }
+utoipa.workspace = true
+uuid.workspace = true
+
 [lints]
 workspace = true

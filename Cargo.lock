@@ -597,6 +597,11 @@ dependencies = [
 [[package]]
 name = "codeplan-ext"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "codeplan-kernel",
+ "tokio",
+]
 
 [[package]]
 name = "codeplan-flags"
@@ -653,6 +658,33 @@ dependencies = [
 [[package]]
 name = "codeplan-notify"
 version = "0.1.0"
+dependencies = [
+ "async-nats",
+ "async-trait",
+ "axum",
+ "chrono",
+ "codeplan-common",
+ "codeplan-ext",
+ "codeplan-kernel",
+ "futures-util",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "utoipa",
+ "uuid",
+]
+
+[[package]]
+name = "codeplan-plugin-inbox"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "codeplan-common",
+ "codeplan-ext",
+ "codeplan-kernel",
+ "codeplan-notify",
+]
 
 [[package]]
 name = "codeplan-project"
@@ -685,8 +717,11 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "codeplan-eventbus",
+ "codeplan-ext",
  "codeplan-identity",
  "codeplan-kernel",
+ "codeplan-notify",
+ "codeplan-plugin-inbox",
  "codeplan-project",
  "codeplan-wiki",
  "serde",

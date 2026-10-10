@@ -142,6 +142,8 @@ pub struct CreateItemRequest {
     pub parent_id: Option<String>,
     /// 自定义字段(缺陷:severity/repro_steps,服务端类型化校验)。
     pub custom_fields: Option<serde_json::Value>,
+    /// 经办人(用户 ID,可选)。
+    pub assignee: Option<String>,
 }
 
 /// 工作项列表查询参数。
@@ -269,7 +271,12 @@ async fn create_item(
                 title: req.title,
                 description: req.description,
                 priority,
-                assignee: None,
+                assignee: req
+                    .assignee
+                    .as_deref()
+                    .map(codeplan_kernel::ids::UserId::try_from)
+                    .transpose()
+                    .map_err(|_| AppError::invalid(DOMAIN_CODE, "非法经办人 ID"))?,
                 reporter: Some(user.id),
                 custom_fields: req.custom_fields.unwrap_or_else(|| serde_json::json!({})),
                 parent_id: req

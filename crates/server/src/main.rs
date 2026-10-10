@@ -148,12 +148,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         authn: Arc::clone(&auth) as Arc<dyn codeplan_kernel::authn::TokenAuthenticator>,
     };
 
+    // 通知(T-116)+ inbox 官方插件(T-117):EXT-01 扩展点首个验证
+    let notification_store: Arc<dyn codeplan_notify::domain::NotificationStore> = Arc::new(
+        codeplan_notify::infra::PgNotificationStore::new(pool.clone()),
+    );
+    let plugin_registry = Arc::new(codeplan_ext::channel::PluginRegistry::new());
+    plugin_registry.register_channel(Arc::new(codeplan_plugin_inbox::InboxChannel::new(
+        Arc::clone(&notification_store),
+    )));
+
     // project.created → identity 授予创建者 admin(T-111 闭环)
     if let Err(e) =
         codeplan_identity::listen::spawn_project_created_grant(&nats_url, Arc::clone(&rbac)).await
     {
         eprintln!("project.created 监听器启动失败: {e}");
     }
+
+    // 通知分发:workitem.* 事件 → 渠道(经插件注册表,T-116/T-117)
+    if let Err(e) = codeplan_notify::listen::spawn_workitem_notifications(
+        &nats_url,
+        Arc::clone(&plugin_registry),
+        Arc::clone(&notification_store),
+    )
+    .await
+    {
+        eprintln!("通知分发监听器启动失败: {e}");
+    }
+
+    let notify_state = codeplan_notify::api::NotifyState {
+        store: Arc::clone(&notification_store),
+        authn: Arc::clone(&auth) as Arc<dyn codeplan_kernel::authn::TokenAuthenticator>,
+    };
 
     // 项目管理域(T-111)
     let project_svc = Arc::new(codeplan_project::service::ProjectService::new(
@@ -195,6 +220,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     app = app.merge(codeplan_project::api::routes(project_state.clone()).with_state(project_state));
     app = app.merge(codeplan_wiki::api::routes(wiki_state.clone()).with_state(wiki_state));
+    app = app.merge(codeplan_notify::api::routes(notify_state.clone()).with_state(notify_state));
 
     let addr = env_or("CODEPLAN_ADDR", "0.0.0.0:8080");
     let listener = tokio::net::TcpListener::bind(&addr).await?;

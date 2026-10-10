@@ -1,0 +1,15 @@
+[package]
+name = "codeplan-plugin-inbox"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+codeplan-common.workspace = true
+codeplan-ext.workspace = true
+codeplan-kernel.workspace = true
+codeplan-notify.workspace = true
+
+[lints]
+workspace = true

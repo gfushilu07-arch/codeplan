@@ -11,8 +11,10 @@ use std::path::Path;
 const L1: &[&str] = &[];
 /// L1 契约层:只准依赖 common。
 const L1_KERNEL: &[&str] = &["common"];
-/// L2 基础设施:只准依赖 L1。
+/// L2 基础设施:只准依赖 L1(例外:notify 经 ext 的 PluginRegistry 分发通知)。
 const L2: &[&str] = &["common", "kernel"];
+/// L2 通知:额外依赖 ext(渠道分发契约)。
+const L2_NOTIFY: &[&str] = &["common", "kernel", "ext"];
 /// L3 业务域:L1 + L2,禁止依赖彼此。
 const L3: &[&str] = &["common", "kernel", "eventbus", "storage", "ext", "notify"];
 /// L4 组合根:依赖一切。
@@ -39,14 +41,22 @@ const L4: &[&str] = &[
     "eventbus",
     "project",
     "wiki",
+    // 官方内置插件(随任务追加)
+    "plugin-inbox",
 ];
 
 /// 目录名 → 允许依赖的内部 crate 目录名列表。
 fn allowed_deps(crate_dir: &str) -> Option<&'static [&'static str]> {
+    // 官方内置插件:ext + kernel + common + notify(通知存储)
+    if let Some(name) = crate_dir.strip_prefix("plugins/") {
+        let _ = name;
+        return Some(&["common", "kernel", "ext", "notify"]);
+    }
     match crate_dir {
         "common" => Some(L1),
         "kernel" => Some(L1_KERNEL),
-        "eventbus" | "storage" | "ext" | "notify" | "agent" => Some(L2),
+        "eventbus" | "storage" | "ext" | "agent" => Some(L2),
+        "notify" => Some(L2_NOTIFY),
         "server" => Some(L4),
         "xtask" => Some(&[]),
         // L3 业务域
@@ -82,6 +92,17 @@ pub fn run(repo_root: &Path) -> Result<(), String> {
         .filter(|e| e.path().join("Cargo.toml").exists())
         .filter_map(|e| e.file_name().into_string().ok())
         .collect();
+    let plugins_dir = repo_root.join("plugins");
+    if plugins_dir.exists() {
+        for e in fs::read_dir(&plugins_dir)
+            .map_err(|e| format!("读取 {}: {e}", plugins_dir.display()))?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().join("Cargo.toml").exists())
+            .filter_map(|e| e.file_name().into_string().ok())
+        {
+            dirs.push(format!("plugins/{e}"));
+        }
+    }
     dirs.push("xtask".to_owned());
     dirs.sort();
 
@@ -91,6 +112,8 @@ pub fn run(repo_root: &Path) -> Result<(), String> {
     for dir in &dirs {
         let manifest_path = if dir == "xtask" {
             repo_root.join("xtask/Cargo.toml")
+        } else if let Some(plugin) = dir.strip_prefix("plugins/") {
+            plugins_dir.join(plugin).join("Cargo.toml")
         } else {
             crates_dir.join(dir).join("Cargo.toml")
         };

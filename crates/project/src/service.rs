@@ -339,6 +339,7 @@ impl ProjectService {
                         "number": created.item_number,
                         "type": created.item_type.as_str(),
                         "title": created.title,
+                        "assignee": created.assignee.map(|u| u.as_uuid()),
                         "reporter": actor.id.as_uuid(),
                     }),
                 )
@@ -418,6 +419,8 @@ impl ProjectService {
                         "number": item.item_number,
                         "from": item.status,
                         "to": to,
+                        "assignee": item.assignee.map(|u| u.as_uuid()),
+                        "reporter": item.reporter.map(|u| u.as_uuid()),
                     }),
                 )
                 .with_actor(actor.id.as_uuid().to_string()),

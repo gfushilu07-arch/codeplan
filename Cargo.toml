@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/*", "xtask"]
+members = ["crates/*", "plugins/*", "xtask"]
 
 [workspace.package]
 version = "0.1.0"
@@ -36,6 +36,9 @@ codeplan-eventbus = { path = "crates/eventbus" }
 codeplan-identity = { path = "crates/identity" }
 codeplan-wiki = { path = "crates/wiki" }
 codeplan-project = { path = "crates/project" }
+codeplan-plugin-inbox = { path = "plugins/inbox" }
+codeplan-notify = { path = "crates/notify" }
+codeplan-ext = { path = "crates/ext" }
 codeplan-kernel = { path = "crates/kernel" }
 
 [workspace.lints.rust]

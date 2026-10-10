@@ -4,5 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[dependencies]
+async-trait.workspace = true
+codeplan-kernel.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }
+
 [lints]
 workspace = true
