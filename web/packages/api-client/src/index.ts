@@ -109,3 +109,76 @@ export async function fetchMyItems(baseUrl = ""): Promise<MyItem[]> {
     headers: { Authorization: `Bearer ${getToken() ?? ""}` },
   });
 }
+
+
+// ---------- 看板(T-113/T-132) ----------
+
+/** 看板条目。 */
+export interface BoardItem {
+  id: string;
+  number: number;
+  title: string;
+  priority: string;
+  board_order: number;
+}
+
+/** 看板列。 */
+export interface BoardColumn {
+  status: string;
+  total: number;
+  items: BoardItem[];
+}
+
+/** 看板视图。 */
+export interface BoardView {
+  item_type: string;
+  columns: BoardColumn[];
+}
+
+/** GET /api/projects/{key}/board */
+export async function fetchBoard(
+  projectKey: string,
+  itemType = "story",
+  baseUrl = "",
+): Promise<BoardView> {
+  const res = await fetch(
+    `${baseUrl}/api/projects/${projectKey}/board?item_type=${itemType}`,
+    { headers: { Authorization: `Bearer ${getToken() ?? ""}` } },
+  );
+  if (!res.ok) throw new ApiError("PM-500", res.statusText, res.status);
+  const body = (await res.json()) as { data: BoardView };
+  return body.data;
+}
+
+/** PUT /api/projects/{key}/board/reorder */
+export async function reorderBoard(
+  projectKey: string,
+  items: Array<{ id: string; status: string; board_order: number }>,
+  baseUrl = "",
+): Promise<void> {
+  const res = await fetch(`${baseUrl}/api/projects/${projectKey}/board/reorder`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken() ?? ""}` },
+    body: JSON.stringify({ items }),
+  });
+  if (!res.ok) throw new ApiError("PM-500", res.statusText, res.status);
+}
+
+/** 项目列表条目。 */
+export interface ProjectSummary {
+  id: string;
+  key: string;
+  name: string;
+  description: string;
+  created_at: string;
+}
+
+/** GET /api/projects */
+export async function listProjects(baseUrl = ""): Promise<ProjectSummary[]> {
+  const res = await fetch(`${baseUrl}/api/projects`, {
+    headers: { Authorization: `Bearer ${getToken() ?? ""}` },
+  });
+  if (!res.ok) throw new ApiError("PM-500", res.statusText, res.status);
+  const body = (await res.json()) as { data: ProjectSummary[] };
+  return body.data;
+}

@@ -3,7 +3,9 @@
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.12.4",
-  "engines": { "node": ">=24" },
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "build": "turbo run typecheck build",
     "lint": "eslint .",
@@ -17,5 +19,8 @@
     "turbo": "^2",
     "typescript": "^5",
     "typescript-eslint": "^8"
+  },
+  "dependencies": {
+    "@dnd-kit/core": "^6.3.1"
   }
 }

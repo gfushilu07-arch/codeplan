@@ -3,13 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "exports": {
-    ".": "./src/index.ts"
-  },
-  "scripts": {
-    "typecheck": "tsc --noEmit"
+  "exports": { ".": "./src/index.ts" },
+  "scripts": { "typecheck": "tsc --noEmit" },
+  "dependencies": {
+    "@codeplan/api-client": "workspace:*",
+    "@dnd-kit/core": "^6"
   },
   "devDependencies": {
+    "@types/react": "^19",
+    "react": "^19",
     "typescript": "^5"
-  }
+  },
+  "peerDependencies": { "react": "^19" }
 }

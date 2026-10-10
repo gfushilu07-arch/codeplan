@@ -1,1 +1,1 @@
-// 工作项/看板/迭代/测试(PM 域)(占位,随对应批次任务填充)。
+export { BoardViewPage } from "./BoardViewPage";

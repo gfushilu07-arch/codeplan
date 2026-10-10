@@ -1,11 +1,14 @@
 import { useEffect, useState } from "react";
+import { useHashRoute } from "./auth";
 import { fetchMe, getToken, setToken, login, type MeInfo } from "@codeplan/api-client";
 import { LoginPage } from "./LoginPage";
 import { Shell } from "./Shell";
 import { WorkbenchPage } from "./WorkbenchPage";
+import { BoardViewPage } from "@codeplan/feature-workitem";
 
 /** 应用根:未登录显示登录页,已登录进入外壳。 */
 export function App() {
+  const route = useHashRoute();
   const [me, setMe] = useState<MeInfo | null>(null);
   const [ready, setReady] = useState(false);
 
@@ -44,8 +47,8 @@ export function App() {
     return <LoginPage onLogin={handleLogin} />;
   }
   return (
-    <Shell me={me} route="/" onLogout={handleLogout}>
-      <WorkbenchPage />
+    <Shell me={me} route={route} onLogout={handleLogout}>
+      {route === "/projects" ? <BoardViewPage /> : <WorkbenchPage />}
     </Shell>
   );
 }
