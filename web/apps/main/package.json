@@ -17,7 +17,8 @@
     "react-dom": "^19",
     "@codeplan/feature-workitem": "workspace:*",
     "@codeplan/feature-wiki": "workspace:*",
-    "@codeplan/feature-repo": "workspace:*"
+    "@codeplan/feature-repo": "workspace:*",
+    "@codeplan/feature-admin": "workspace:*"
   },
   "devDependencies": {
     "@types/react": "^19",

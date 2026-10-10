@@ -30,6 +30,9 @@ export function Shell({
   onLogout: () => void;
   children?: React.ReactNode;
 }) {
+  const nav = me.is_platform_admin
+    ? NAV
+    : NAV.filter((item) => item.path !== "/admin");
   return (
     <div
       style={{
@@ -51,7 +54,7 @@ export function Shell({
         }}
       >
         <strong style={{ color: "var(--cp-color-primary)", fontSize: 16 }}>CodePlan</strong>
-        {NAV.map((item) => {
+        {nav.map((item) => {
           const active = route === item.path || (item.path !== "/" && route.startsWith(item.path));
           return (
             <a

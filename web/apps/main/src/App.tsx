@@ -1,14 +1,21 @@
 import { useEffect, useState } from "react";
 import { useHashRoute } from "./auth";
-import { fetchMe, getToken, setToken, login, type MeInfo } from "@codeplan/api-client";
+import {
+  fetchMe,
+  getToken,
+  setToken,
+  login,
+  type MeInfo,
+} from "@codeplan/api-client";
 import { LoginPage } from "./LoginPage";
 import { Shell } from "./Shell";
 import { WorkbenchPage } from "./WorkbenchPage";
 import { BoardViewPage } from "@codeplan/feature-workitem";
 import { WikiPageView } from "@codeplan/feature-wiki";
 import { RepoPage } from "@codeplan/feature-repo";
+import { AdminUsersPage } from "@codeplan/feature-admin";
 
-/** 应用根:未登录显示登录页,已登录进入外壳。 */
+/** 应用根:未登录显示登录页,已登录进入外壳(会话经 /api/me 恢复)。 */
 export function App() {
   const route = useHashRoute();
   const [me, setMe] = useState<MeInfo | null>(null);
@@ -43,7 +50,11 @@ export function App() {
   };
 
   if (!ready) {
-    return <div style={{ padding: "var(--cp-space-4)", fontFamily: "var(--cp-font-sans)" }}>加载中…</div>;
+    return (
+      <div style={{ padding: "var(--cp-space-4)", fontFamily: "var(--cp-font-sans)" }}>
+        加载中…
+      </div>
+    );
   }
   if (!me) {
     return <LoginPage onLogin={handleLogin} />;
@@ -53,11 +64,14 @@ export function App() {
       {route === "/projects" && <BoardViewPage />}
       {route === "/wiki" && <WikiRoute />}
       {route === "/repos" && <RepoRoute />}
-      {route !== "/projects" && route !== "/wiki" && route !== "/repos" && <WorkbenchPage />}
+      {route === "/admin" && me.is_platform_admin && <AdminUsersPage />}
+      {route === "/admin" && !me.is_platform_admin && (
+        <div style={{ color: "var(--cp-color-danger)" }}>仅平台管理员可访问</div>
+      )}
+      {route === "/" && <WorkbenchPage />}
     </Shell>
   );
 }
-
 
 /** Wiki 路由包装:项目选择 + WikiPageView。 */
 function WikiRoute() {
@@ -73,7 +87,7 @@ function WikiRoute() {
   return <WikiPageView projectId={projectId} />;
 }
 
-/** 仓库路由包装:项目选择(取 CP 键演示,完整选择器随管理页)。 */
+/** 仓库路由包装(v1:仓库挂 admin 命名空间,选择器随 T-135 管理页完善)。 */
 function RepoRoute() {
   const [projects, setProjects] = useState<Array<{ id: string; key: string }> | null>(null);
   useEffect(() => {
@@ -84,12 +98,5 @@ function RepoRoute() {
   if (!projects || projects.length === 0) {
     return <div style={{ color: "var(--cp-color-text-muted)" }}>暂无项目</div>;
   }
-  // v1:仓库固定挂在 admin 命名空间(owner 键暂以登录名占位,见 T-120 API)
-  return (
-    <RepoPage
-      owner="admin"
-      repoKey="demo"
-      defaultBranch="main"
-    />
-  );
+  return <RepoPage owner="admin" repoKey="demo" defaultBranch="main" />;
 }

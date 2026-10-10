@@ -362,3 +362,60 @@ export async function repoBlob(
   if (!res.ok) throw new ApiError("GIT-404", res.statusText, res.status);
   return res.text();
 }
+
+
+// ---------- 平台管理(T-123/T-135) ----------
+
+/** 平台用户(管理视图)。 */
+export interface AdminUser {
+  id: string;
+  username: string;
+  display_name: string;
+  email: string;
+  status: string;
+  source: string;
+  is_platform_admin: boolean;
+}
+
+/** GET /api/admin/users(平台管理员)。 */
+export async function adminListUsers(baseUrl = ""): Promise<AdminUser[]> {
+  return request<AdminUser[]>("/api/admin/users", baseUrl, {
+    headers: { Authorization: `Bearer ${getToken() ?? ""}` },
+  });
+}
+
+/** POST /api/admin/users/{id}/status(平台管理员)。 */
+export async function adminSetUserStatus(
+  id: string,
+  status: "active" | "disabled",
+  baseUrl = "",
+): Promise<void> {
+  const res = await fetch(`${baseUrl}/api/admin/users/${id}/status`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${getToken() ?? ""}`,
+    },
+    body: JSON.stringify({ status }),
+  });
+  if (!res.ok) {
+    const errBody = (await res.json().catch(() => null)) as {
+      code?: string;
+      message?: string;
+    } | null;
+    throw new ApiError(
+      errBody?.code ?? "ORG-500",
+      errBody?.message ?? res.statusText,
+      res.status,
+    );
+  }
+}
+
+/** GET /api/dashboard/counts */
+export async function dashboardCounts(
+  baseUrl = "",
+): Promise<{ user_id: string; display_name: string; platform_users: number; is_platform_admin: boolean }> {
+  return request("/api/dashboard/counts", baseUrl, {
+    headers: { Authorization: `Bearer ${getToken() ?? ""}` },
+  });
+}
