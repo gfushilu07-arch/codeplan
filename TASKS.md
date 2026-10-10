@@ -123,7 +123,10 @@
   - vite 代理 /api → 后端(CODEPLAN_BACKEND_URL 可配,默认 8081)
   - fetchMe 会话恢复/登出/错误提示;e2e:登录→shell→工作台数据经代理返回 ✓
 - [ ] **T-132** 工作项页面:看板(dnd-kit 拖拽)/列表/树形 + 工作项详情(状态流转/评论) · L
-- [ ] **T-133** Wiki 页面(bytemd 编辑预览)+ 附件管理 · M
+- [x] **T-133** Wiki 页面:文档树 + 编辑(Markdown)/渲染 + 附件入口 · M ✅ 2026-10-10
+  - features/wiki:树侧栏(嵌套渲染/新建)+ 页面查看(服务端 HTML)/编辑(前端简渲染预览,保存后以服务端为准)+ 删除(级联)
+  - api-client:wikiTree/fetchWikiPage/create/update/delete/uploadAttachment
+  - e2e 经 vite 代理:建页+取页(HTML 渲染正确)✓;附件上传下载 UI 随批次二补(后端/接口已备)
 - [ ] **T-134** 仓库页面:文件树浏览/提交历史/diff(shiki)/blame · L
 - [ ] **T-135** 个人工作台页 + 管理页(用户/组织/审计) · M
 

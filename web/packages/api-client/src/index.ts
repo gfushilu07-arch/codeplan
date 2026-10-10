@@ -182,3 +182,113 @@ export async function listProjects(baseUrl = ""): Promise<ProjectSummary[]> {
   const body = (await res.json()) as { data: ProjectSummary[] };
   return body.data;
 }
+
+
+// ---------- Wiki(T-115/T-133) ----------
+
+/** Wiki 页面(源 + 渲染 HTML)。 */
+export interface WikiPage {
+  id: string;
+  slug: string;
+  title: string;
+  content: string;
+  html: string;
+  parent_id: string | null;
+  updated_at: string;
+}
+
+/** 页面树节点。 */
+export interface WikiTreeNode {
+  id: string;
+  slug: string;
+  title: string;
+  parent_id: string | null;
+  updated_at: string;
+  children: WikiTreeNode[];
+}
+
+/** GET /api/projects/{id}/wiki */
+export async function wikiTree(projectId: string, baseUrl = ""): Promise<WikiTreeNode[]> {
+  const res = await fetch(`${baseUrl}/api/projects/${projectId}/wiki`, {
+    headers: { Authorization: `Bearer ${getToken() ?? ""}` },
+  });
+  if (!res.ok) throw new ApiError("WIKI-500", res.statusText, res.status);
+  const body = (await res.json()) as { data: WikiTreeNode[] };
+  return body.data;
+}
+
+/** GET /api/projects/{id}/wiki/{slug} */
+export async function fetchWikiPage(
+  projectId: string,
+  slug: string,
+  baseUrl = "",
+): Promise<WikiPage> {
+  const res = await fetch(`${baseUrl}/api/projects/${projectId}/wiki/${slug}`, {
+    headers: { Authorization: `Bearer ${getToken() ?? ""}` },
+  });
+  if (!res.ok) throw new ApiError("WIKI-404", res.statusText, res.status);
+  const body = (await res.json()) as { data: WikiPage };
+  return body.data;
+}
+
+/** POST /api/projects/{id}/wiki */
+export async function createWikiPage(
+  projectId: string,
+  body: { slug: string; title: string; content: string; parent_id?: string },
+  baseUrl = "",
+): Promise<WikiPage> {
+  const res = await fetch(`${baseUrl}/api/projects/${projectId}/wiki`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken() ?? ""}` },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { message?: string } | null;
+    throw new ApiError("WIKI-400", err?.message ?? res.statusText, res.status);
+  }
+  const data = (await res.json()) as { data: WikiPage };
+  return data.data;
+}
+
+/** PUT /api/projects/{id}/wiki/{slug} */
+export async function updateWikiPage(
+  projectId: string,
+  slug: string,
+  body: { title: string; content: string },
+  baseUrl = "",
+): Promise<WikiPage> {
+  const res = await fetch(`${baseUrl}/api/projects/${projectId}/wiki/${slug}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken() ?? ""}` },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new ApiError("WIKI-500", res.statusText, res.status);
+  const data = (await res.json()) as { data: WikiPage };
+  return data.data;
+}
+
+/** DELETE /api/projects/{id}/wiki/{slug} */
+export async function deleteWikiPage(projectId: string, slug: string, baseUrl = ""): Promise<void> {
+  const res = await fetch(`${baseUrl}/api/projects/${projectId}/wiki/${slug}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${getToken() ?? ""}` },
+  });
+  if (!res.ok) throw new ApiError("WIKI-500", res.statusText, res.status);
+}
+
+/** 上传附件。返回附件 ID。 */
+export async function uploadAttachment(
+  projectId: string,
+  slug: string,
+  filename: string,
+  bytes: Blob | Uint8Array,
+  baseUrl = "",
+): Promise<{ id: string; filename: string; size_bytes: number }> {
+  const res = await fetch(
+    `${baseUrl}/api/projects/${projectId}/wiki/${slug}/attachments?filename=${encodeURIComponent(filename)}`,
+    { method: "POST", headers: { Authorization: `Bearer ${getToken() ?? ""}` }, body: bytes as Blob },
+  );
+  if (!res.ok) throw new ApiError("WIKI-400", res.statusText, res.status);
+  const body = (await res.json()) as { data: { id: string; filename: string; size_bytes: number } };
+  return body.data;
+}

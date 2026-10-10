@@ -5,6 +5,7 @@ import { LoginPage } from "./LoginPage";
 import { Shell } from "./Shell";
 import { WorkbenchPage } from "./WorkbenchPage";
 import { BoardViewPage } from "@codeplan/feature-workitem";
+import { WikiPageView } from "@codeplan/feature-wiki";
 
 /** 应用根:未登录显示登录页,已登录进入外壳。 */
 export function App() {
@@ -48,7 +49,24 @@ export function App() {
   }
   return (
     <Shell me={me} route={route} onLogout={handleLogout}>
-      {route === "/projects" ? <BoardViewPage /> : <WorkbenchPage />}
+      {route === "/projects" && <BoardViewPage />}
+      {route === "/wiki" && <WikiRoute />}
+      {route !== "/projects" && route !== "/wiki" && <WorkbenchPage />}
     </Shell>
   );
+}
+
+
+/** Wiki 路由包装:项目选择 + WikiPageView。 */
+function WikiRoute() {
+  const [projectId, setProjectId] = useState<string | null>(null);
+  useEffect(() => {
+    import("@codeplan/api-client").then(({ listProjects }) =>
+      listProjects()
+        .then((ps) => setProjectId(ps[0]?.id ?? null))
+        .catch(() => setProjectId(null)),
+    );
+  }, []);
+  if (!projectId) return <div style={{ color: "var(--cp-color-text-muted)" }}>暂无项目</div>;
+  return <WikiPageView projectId={projectId} />;
 }

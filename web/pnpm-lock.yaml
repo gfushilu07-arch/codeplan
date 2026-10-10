@@ -39,6 +39,9 @@ importers:
       '@codeplan/design-tokens':
         specifier: workspace:*
         version: link:../../packages/design-tokens
+      '@codeplan/feature-wiki':
+        specifier: workspace:*
+        version: link:../../features/wiki
       '@codeplan/feature-workitem':
         specifier: workspace:*
         version: link:../../features/workitem
@@ -102,6 +105,22 @@ importers:
         version: 5.9.3
 
   features/search:
+    devDependencies:
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+
+  features/wiki:
+    dependencies:
+      '@codeplan/api-client':
+        specifier: workspace:*
+        version: link:../../packages/api-client
+      '@types/react':
+        specifier: ^19
+        version: 19.3.0
+      react:
+        specifier: ^19
+        version: 19.3.0
     devDependencies:
       typescript:
         specifier: ^5

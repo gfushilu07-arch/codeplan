@@ -3,6 +3,7 @@ import type { MeInfo } from "@codeplan/api-client";
 const NAV: Array<{ label: string; path: string }> = [
   { label: "工作台", path: "/" },
   { label: "项目", path: "/projects" },
+  { label: "Wiki", path: "/wiki" },
   { label: "代码", path: "/repos" },
   { label: "管理", path: "/admin" },
 ];

@@ -1,0 +1,1 @@
+export { WikiPageView } from "./WikiPageView";
