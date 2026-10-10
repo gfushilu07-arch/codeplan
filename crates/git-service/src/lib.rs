@@ -5,6 +5,8 @@
 //! `GitRepo` adapter(gix);禁止 git2/libgit2 等 C FFI。
 
 pub mod api;
+pub mod browse;
+pub mod browse_api;
 pub mod domain;
 pub mod infra;
 pub mod service;

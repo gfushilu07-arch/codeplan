@@ -40,6 +40,7 @@ pub fn routes(state: GitState) -> Router<GitState> {
                 .delete(delete_repository)
                 .patch(patch_repository),
         )
+        .merge(crate::browse_api::browse_routes())
         .layer(middleware::from_fn_with_state(state, auth_mw))
 }
 
