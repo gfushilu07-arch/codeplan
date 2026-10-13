@@ -11,19 +11,20 @@
 
 | 文档 | 内容 |
 |---|---|
+| [docs/HANDOVER.md](./docs/HANDOVER.md) | **交接文档**:快速上手、架构地图、踩坑清单、未完成工作与风险 |
 | [PLAN.md](./PLAN.md) | 产品规划:71 项功能基线、技术架构、四批次路线 |
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | 代码架构规约:crate 分层解耦、公共方法、前端栈与 UI 方向 |
 | [AGENTS.md](./AGENTS.md) | AI/人类协作规则:铁律、公共代码决策树、DoD |
-| [TASKS.md](./TASKS.md) | 开发任务清单(78 项,含进度标记) |
+| [TASKS.md](./TASKS.md) | 开发任务清单(85 项,含进度标记) |
 
 ## 仓库结构
 
 ```
-crates/     Rust workspace(19 个 crate,四层:公共/基础设施/业务域/组合根)
-plugins/    官方内置插件(证书自动申请、通知渠道、扫描器…)
+crates/     Rust workspace(20 个 crate,四层:公共/基础设施/业务域/组合根)
+plugins/    官方内置插件(inbox 站内信、cert-acme 证书自动申请)
 web/        前端 monorepo(apps/main + packages/* + features/*)
 deploy/     docker-compose、Nginx 模板、备份脚本
-docs/       设计文档
+docs/       设计文档与交接文档
 xtask/      仓库工程任务(lint-deps / sync-rules)
 ```
 
