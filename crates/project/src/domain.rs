@@ -234,6 +234,16 @@ pub trait WorkItemRepository: Send + Sync {
     /// 存储故障。
     async fn find_by_id(&self, id: WorkItemId) -> Result<Option<WorkItem>, AppError>;
 
+    /// 按项目内编号查询(提交关联 `#KEY-N` 解析)。
+    ///
+    /// # Errors
+    /// 存储故障。
+    async fn find_by_number(
+        &self,
+        project_id: ProjectId,
+        item_number: i64,
+    ) -> Result<Option<WorkItem>, AppError>;
+
     /// 按项目过滤列表(全空过滤 = 全量;按创建时间倒序)。
     ///
     /// # Errors
@@ -651,5 +661,274 @@ mod bug_fields_tests {
         }))
         .expect("应成功");
         assert!(!blank.ready_to_resolve(), "空白复现步骤不算已填");
+    }
+}
+
+define_id!(
+    /// 提交链接 ID。
+    CommitLinkId
+);
+
+/// 工作项关联的提交(推送时解析 `#KEY-N` 建立,T-207)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkItemCommit {
+    /// 链接 ID。
+    pub id: CommitLinkId,
+    /// 工作项 ID。
+    pub work_item_id: WorkItemId,
+    /// 仓库 ID(跨域引用,不加 FK)。
+    pub repo_id: uuid::Uuid,
+    /// 仓库全名。
+    pub full_name: String,
+    /// 提交 SHA。
+    pub commit_sha: String,
+    /// 提交标题。
+    pub subject: String,
+    /// 引用全名。
+    pub ref_name: String,
+    /// 提交时间(可空,payload 未带时为空)。
+    pub committed_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// 关联时间。
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// 新提交链接入参。
+#[derive(Debug, Clone)]
+pub struct NewCommitLink {
+    /// 工作项 ID。
+    pub work_item_id: WorkItemId,
+    /// 仓库 ID。
+    pub repo_id: uuid::Uuid,
+    /// 仓库全名。
+    pub full_name: String,
+    /// 提交 SHA。
+    pub commit_sha: String,
+    /// 提交标题。
+    pub subject: String,
+    /// 引用全名。
+    pub ref_name: String,
+}
+
+/// 提交链接仓储。
+#[async_trait::async_trait]
+pub trait CommitLinkRepository: Send + Sync {
+    /// 建链(重复幂等)。
+    ///
+    /// # Errors
+    /// 存储故障。
+    async fn link(&self, link: &NewCommitLink) -> Result<(), AppError>;
+
+    /// 工作项的提交链接(时间倒序)。
+    ///
+    /// # Errors
+    /// 存储故障。
+    async fn list_by_item(&self, work_item_id: WorkItemId)
+    -> Result<Vec<WorkItemCommit>, AppError>;
+}
+
+define_id!(
+    /// 工作项评论 ID。
+    CommentId
+);
+
+/// 工作项评论(T-132):详情页对话流。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkItemComment {
+    /// 评论 ID。
+    pub id: CommentId,
+    /// 工作项 ID。
+    pub work_item_id: WorkItemId,
+    /// 作者(跨域引用 identity,不加 FK;系统评论为空)。
+    pub author_id: Option<UserId>,
+    /// 正文(Markdown)。
+    pub body: String,
+    /// 创建时间。
+    pub created_at: DateTime<Utc>,
+    /// 更新时间。
+    pub updated_at: DateTime<Utc>,
+}
+
+/// 新增评论入参。
+#[derive(Debug, Clone)]
+pub struct NewComment {
+    /// 工作项 ID。
+    pub work_item_id: WorkItemId,
+    /// 作者。
+    pub author_id: Option<UserId>,
+    /// 正文(去空白后不得为空)。
+    pub body: String,
+}
+
+/// 评论仓储。
+#[async_trait::async_trait]
+pub trait CommentRepository: Send + Sync {
+    /// 新增并返回落库结果。
+    ///
+    /// # Errors
+    /// 存储故障。
+    async fn add(&self, comment: &NewComment) -> Result<WorkItemComment, AppError>;
+
+    /// 某工作项的评论(时间正序)。
+    ///
+    /// # Errors
+    /// 存储故障。
+    async fn list_by_item(&self, work_item_id: WorkItemId)
+    -> Result<Vec<WorkItemComment>, AppError>;
+
+    /// 按 ID 查询(删除前的权限判定用)。
+    ///
+    /// # Errors
+    /// 存储故障。
+    async fn find_by_id(&self, id: CommentId) -> Result<Option<WorkItemComment>, AppError>;
+
+    /// 删除,返回是否命中。
+    ///
+    /// # Errors
+    /// 存储故障。
+    async fn delete(&self, id: CommentId) -> Result<bool, AppError>;
+}
+
+define_id!(
+    /// 工时记录 ID。
+    WorklogId
+);
+
+/// 工时登记(T-318 / PM-09)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Worklog {
+    /// 记录 ID。
+    pub id: WorklogId,
+    /// 工作项 ID。
+    pub work_item_id: WorkItemId,
+    /// 登记人(跨域引用 identity,不加 FK)。
+    pub author_id: Option<UserId>,
+    /// 用时(分钟,正数)。
+    pub minutes: i64,
+    /// 备注。
+    pub note: String,
+    /// 工作日期。
+    pub spent_on: chrono::NaiveDate,
+    /// 创建时间。
+    pub created_at: DateTime<Utc>,
+}
+
+/// 新增工时入参。
+#[derive(Debug, Clone)]
+pub struct NewWorklog {
+    /// 工作项 ID。
+    pub work_item_id: WorkItemId,
+    /// 登记人。
+    pub author_id: Option<UserId>,
+    /// 用时(分钟)。
+    pub minutes: i64,
+    /// 备注。
+    pub note: String,
+    /// 工作日期(空 = 今天)。
+    pub spent_on: Option<chrono::NaiveDate>,
+}
+
+/// 工时汇总。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct WorklogSummary {
+    /// 累计登记(分钟)。
+    pub logged_minutes: i64,
+    /// 预估(分钟;取自 `custom_fields.estimate_minutes`,无则为空)。
+    pub estimate_minutes: Option<i64>,
+    /// 记录数。
+    pub entries: usize,
+    /// 按人汇总(用户 ID 字符串 → 分钟)。
+    pub by_author: std::collections::BTreeMap<String, i64>,
+}
+
+/// 工时仓储。
+#[async_trait::async_trait]
+pub trait WorklogRepository: Send + Sync {
+    /// 新增并返回落库结果。
+    ///
+    /// # Errors
+    /// 存储故障。
+    async fn add(&self, log: &NewWorklog) -> Result<Worklog, AppError>;
+
+    /// 某工作项的工时(日期倒序)。
+    ///
+    /// # Errors
+    /// 存储故障。
+    async fn list_by_item(&self, work_item_id: WorkItemId) -> Result<Vec<Worklog>, AppError>;
+
+    /// 按 ID 查询(删除前权限判定)。
+    ///
+    /// # Errors
+    /// 存储故障。
+    async fn find_by_id(&self, id: WorklogId) -> Result<Option<Worklog>, AppError>;
+
+    /// 删除,返回是否命中。
+    ///
+    /// # Errors
+    /// 存储故障。
+    async fn delete(&self, id: WorklogId) -> Result<bool, AppError>;
+}
+
+/// 工时汇总(纯函数,便于单测)。
+#[must_use]
+pub fn summarize_worklogs(logs: &[Worklog], estimate_minutes: Option<i64>) -> WorklogSummary {
+    let mut by_author: std::collections::BTreeMap<String, i64> = std::collections::BTreeMap::new();
+    let mut total = 0i64;
+    for l in logs {
+        total += l.minutes;
+        let key = l
+            .author_id
+            .map(|u| u.as_uuid().to_string())
+            .unwrap_or_else(|| "system".to_owned());
+        *by_author.entry(key).or_insert(0) += l.minutes;
+    }
+    WorklogSummary {
+        logged_minutes: total,
+        estimate_minutes,
+        entries: logs.len(),
+        by_author,
+    }
+}
+
+#[cfg(test)]
+mod worklog_tests {
+    use super::*;
+
+    fn log(author: Option<UserId>, minutes: i64) -> Worklog {
+        Worklog {
+            id: WorklogId::from_uuid(uuid::Uuid::new_v4()),
+            work_item_id: WorkItemId::from_uuid(uuid::Uuid::nil()),
+            author_id: author,
+            minutes,
+            note: String::new(),
+            spent_on: chrono::NaiveDate::from_ymd_opt(2026, 10, 12).expect("合法日期"),
+            created_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn summary_totals_and_groups_by_author() {
+        let a = UserId::from_uuid(uuid::Uuid::from_u128(1));
+        let b = UserId::from_uuid(uuid::Uuid::from_u128(2));
+        let logs = vec![
+            log(Some(a), 60),
+            log(Some(a), 30),
+            log(Some(b), 120),
+            log(None, 15),
+        ];
+        let s = summarize_worklogs(&logs, Some(480));
+        assert_eq!(s.logged_minutes, 225);
+        assert_eq!(s.entries, 4);
+        assert_eq!(s.estimate_minutes, Some(480));
+        assert_eq!(s.by_author.get(&a.as_uuid().to_string()), Some(&90));
+        assert_eq!(s.by_author.get(&b.as_uuid().to_string()), Some(&120));
+        assert_eq!(s.by_author.get("system"), Some(&15));
+    }
+
+    #[test]
+    fn empty_summary_is_zero() {
+        let s = summarize_worklogs(&[], None);
+        assert_eq!(s.logged_minutes, 0);
+        assert_eq!(s.entries, 0);
+        assert!(s.by_author.is_empty());
     }
 }

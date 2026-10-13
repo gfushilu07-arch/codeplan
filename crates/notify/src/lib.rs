@@ -4,6 +4,8 @@
 
 pub mod api;
 pub mod domain;
+pub mod im;
+pub mod im_actions;
 pub mod infra;
 pub mod listen;
 

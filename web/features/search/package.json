@@ -10,6 +10,15 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@types/react": "^19",
+    "react": "^19",
     "typescript": "^5"
+  },
+  "dependencies": {
+    "@codeplan/api-client": "workspace:*",
+    "react": "^19"
+  },
+  "peerDependencies": {
+    "react": "^19"
   }
 }

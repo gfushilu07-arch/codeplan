@@ -7,6 +7,7 @@ pub mod audit;
 pub mod authn;
 pub mod authz;
 pub mod events;
+pub mod git;
 pub mod identity;
 pub mod ids;
 pub mod lookup;

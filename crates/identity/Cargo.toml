@@ -17,6 +17,8 @@ axum.workspace = true
 chrono.workspace = true
 codeplan-common = { workspace = true, features = ["axum"] }
 codeplan-kernel.workspace = true
+rand.workspace = true
+sha2 = "0.10"
 jsonwebtoken.workspace = true
 serde.workspace = true
 ssh-key.workspace = true

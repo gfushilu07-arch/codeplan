@@ -9,11 +9,16 @@ import {
 } from "@codeplan/api-client";
 import { LoginPage } from "./LoginPage";
 import { Shell } from "./Shell";
+import { ErrorBoundary } from "./ErrorBoundary";
 import { WorkbenchPage } from "./WorkbenchPage";
 import { BoardViewPage } from "@codeplan/feature-workitem";
 import { WikiPageView } from "@codeplan/feature-wiki";
 import { RepoPage } from "@codeplan/feature-repo";
-import { AdminUsersPage } from "@codeplan/feature-admin";
+import { AdminPage } from "@codeplan/feature-admin";
+import { GanttView, BacklogView, WorkItemDetail, WorkItemListView } from "@codeplan/feature-workitem";
+import { ReportsView } from "@codeplan/feature-insights";
+import { CommandPalette } from "@codeplan/feature-search";
+import { AppCenterPage } from "@codeplan/feature-appcenter";
 
 /** 应用根:未登录显示登录页,已登录进入外壳(会话经 /api/me 恢复)。 */
 export function App() {
@@ -51,7 +56,7 @@ export function App() {
 
   if (!ready) {
     return (
-      <div style={{ padding: "var(--cp-space-4)", fontFamily: "var(--cp-font-sans)" }}>
+      <div className="cp-container cp-muted" style={{ paddingTop: 80, textAlign: "center" }}>
         加载中…
       </div>
     );
@@ -61,14 +66,23 @@ export function App() {
   }
   return (
     <Shell me={me} route={route} onLogout={handleLogout}>
-      {route === "/projects" && <BoardViewPage />}
-      {route === "/wiki" && <WikiRoute />}
-      {route === "/repos" && <RepoRoute />}
-      {route === "/admin" && me.is_platform_admin && <AdminUsersPage />}
-      {route === "/admin" && !me.is_platform_admin && (
-        <div style={{ color: "var(--cp-color-danger)" }}>仅平台管理员可访问</div>
-      )}
-      {route === "/" && <WorkbenchPage />}
+      <CommandPalette onNavigate={(hash) => (window.location.hash = hash)} />
+      <ErrorBoundary key={route}>
+        {route === "/projects" && <BoardViewPage />}
+        {route === "/wiki" && <WikiRoute />}
+        {route === "/repos" && <RepoRoute />}
+        {route === "/admin" && me.is_platform_admin && <AdminPage />}
+        {route === "/admin" && !me.is_platform_admin && (
+          <div className="cp-alert cp-alert-danger">仅平台管理员可访问</div>
+        )}
+        {route === "/gantt" && <GanttView />}
+        {route === "/backlog" && <BacklogView />}
+        {route === "/items" && <WorkItemListView />}
+        {route === "/apps" && <AppCenterPage />}
+        {route.startsWith("/item/") && <WorkItemDetail itemId={route.slice("/item/".length)} />}
+        {route === "/report" && <ReportsView />}
+        {route === "/" && <WorkbenchPage />}
+      </ErrorBoundary>
     </Shell>
   );
 }
@@ -83,7 +97,14 @@ function WikiRoute() {
         .catch(() => setProjectId(null)),
     );
   }, []);
-  if (!projectId) return <div style={{ color: "var(--cp-color-text-muted)" }}>暂无项目</div>;
+  if (!projectId)
+    return (
+      <div className="cp-empty">
+        <div className="cp-empty-icon">📦</div>
+        <div className="cp-empty-title">暂无项目</div>
+        <div className="cp-empty-hint">请先创建一个项目</div>
+      </div>
+    );
   return <WikiPageView projectId={projectId} />;
 }
 
@@ -96,7 +117,13 @@ function RepoRoute() {
       .catch(() => setProjects([]));
   }, []);
   if (!projects || projects.length === 0) {
-    return <div style={{ color: "var(--cp-color-text-muted)" }}>暂无项目</div>;
+    return (
+      <div className="cp-empty">
+        <div className="cp-empty-icon">📦</div>
+        <div className="cp-empty-title">暂无项目</div>
+        <div className="cp-empty-hint">请先创建一个项目</div>
+      </div>
+    );
   }
-  return <RepoPage owner="admin" repoKey="demo" defaultBranch="main" />;
+  return <RepoPage owner="admin" repoKey="pr-demo" defaultBranch="main" />;
 }

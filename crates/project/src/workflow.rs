@@ -89,6 +89,35 @@ impl StateMachine {
             .any(|(f, t)| f == from && t == to)
     }
 
+    /// 从 from 到 to 的最短合法路径(不含 from;相等返回空)。
+    /// BFS 保证步数最少;不可达返回 None。
+    #[must_use]
+    pub fn path(&self, from: &str, to: &str) -> Option<Vec<String>> {
+        if from == to {
+            return Some(Vec::new());
+        }
+        let mut queue: std::collections::VecDeque<Vec<String>> = std::collections::VecDeque::new();
+        let mut visited: std::collections::HashSet<&str> = std::collections::HashSet::from([from]);
+        queue.push_back(vec![from.to_owned()]);
+        while let Some(route) = queue.pop_front() {
+            let last = route.last().expect("路径非空");
+            for (f, t) in &self.config.transitions {
+                if f != last || visited.contains(t.as_str()) {
+                    continue;
+                }
+                let mut next = route.clone();
+                next.push(t.clone());
+                if t == to {
+                    next.remove(0);
+                    return Some(next);
+                }
+                visited.insert(t.as_str());
+                queue.push_back(next);
+            }
+        }
+        None
+    }
+
     /// 全部合法状态。
     #[must_use]
     pub fn states(&self) -> &[String] {
@@ -127,5 +156,35 @@ mod tests {
         });
         assert!(sm.can_transition("backlog", "shipping"));
         assert_eq!(sm.states().len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::*;
+
+    #[test]
+    fn path_walks_legal_steps() {
+        let sm = StateMachine::builtin(ItemType::Task);
+        assert_eq!(sm.path("todo", "todo"), Some(vec![]));
+        assert_eq!(
+            sm.path("todo", "done"),
+            Some(vec![
+                "in_progress".into(),
+                "in_review".into(),
+                "done".into()
+            ])
+        );
+        assert_eq!(sm.path("done", "done"), Some(vec![]));
+        assert_eq!(sm.path("todo", "closed"), None, "task 工作流无 closed");
+    }
+
+    #[test]
+    fn path_for_bug_reaches_resolved() {
+        let sm = StateMachine::builtin(ItemType::Bug);
+        assert_eq!(
+            sm.path("open", "resolved"),
+            Some(vec!["in_progress".into(), "resolved".into()])
+        );
     }
 }

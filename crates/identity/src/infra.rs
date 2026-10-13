@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use codeplan_common::error::AppError;
 use codeplan_kernel::ids::UserId;
-use sqlx::PgPool;
+use sqlx::{PgPool, Row};
 
 use crate::DOMAIN_CODE;
 use crate::domain::{NewUser, Organization, User, UserRepository, UserStatus};
@@ -251,6 +251,138 @@ impl crate::domain::OrgRepository for PgOrgRepository {
                 id: crate::domain::OrgId::from_uuid(id),
                 name,
                 created_at,
+            })
+            .collect())
+    }
+
+    async fn find(&self, id: crate::domain::OrgId) -> Result<Option<Organization>, AppError> {
+        let row: Option<(uuid::Uuid, String, DateTime<Utc>)> =
+            sqlx::query_as("SELECT id, name, created_at FROM org_organization WHERE id = $1")
+                .bind(id.as_uuid())
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|_| AppError::internal(DOMAIN_CODE))?;
+        Ok(row.map(|(id, name, created_at)| Organization {
+            id: crate::domain::OrgId::from_uuid(id),
+            name,
+            created_at,
+        }))
+    }
+
+    async fn create_team(
+        &self,
+        org_id: crate::domain::OrgId,
+        name: &str,
+    ) -> Result<crate::domain::Team, AppError> {
+        let (id, created_at): (uuid::Uuid, DateTime<Utc>) = sqlx::query_as(
+            "INSERT INTO org_team (id, org_id, name) VALUES ($1, $2, $3) \
+             RETURNING id, created_at",
+        )
+        .bind(uuid::Uuid::new_v4())
+        .bind(org_id.as_uuid())
+        .bind(name)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(unique_conflict)?;
+        Ok(crate::domain::Team {
+            id: crate::domain::TeamId::from_uuid(id),
+            org_id,
+            name: name.to_owned(),
+            created_at,
+        })
+    }
+
+    async fn list_teams(
+        &self,
+        org_id: crate::domain::OrgId,
+    ) -> Result<Vec<crate::domain::Team>, AppError> {
+        let rows: Vec<(uuid::Uuid, uuid::Uuid, String, DateTime<Utc>)> = sqlx::query_as(
+            "SELECT id, org_id, name, created_at FROM org_team WHERE org_id = $1 \
+             ORDER BY created_at",
+        )
+        .bind(org_id.as_uuid())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|_| AppError::internal(DOMAIN_CODE))?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, org_id, name, created_at)| crate::domain::Team {
+                id: crate::domain::TeamId::from_uuid(id),
+                org_id: crate::domain::OrgId::from_uuid(org_id),
+                name,
+                created_at,
+            })
+            .collect())
+    }
+
+    async fn find_team(
+        &self,
+        id: crate::domain::TeamId,
+    ) -> Result<Option<crate::domain::Team>, AppError> {
+        let row: Option<(uuid::Uuid, uuid::Uuid, String, DateTime<Utc>)> = sqlx::query_as(
+            "SELECT id, org_id, name, created_at FROM org_team WHERE id = $1",
+        )
+        .bind(id.as_uuid())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|_| AppError::internal(DOMAIN_CODE))?;
+        Ok(row.map(|(id, org_id, name, created_at)| crate::domain::Team {
+            id: crate::domain::TeamId::from_uuid(id),
+            org_id: crate::domain::OrgId::from_uuid(org_id),
+            name,
+            created_at,
+        }))
+    }
+
+    async fn add_member(
+        &self,
+        team_id: crate::domain::TeamId,
+        user_id: UserId,
+    ) -> Result<(), AppError> {
+        sqlx::query(
+            "INSERT INTO org_team_member (team_id, user_id) VALUES ($1, $2) \
+             ON CONFLICT (team_id, user_id) DO NOTHING",
+        )
+        .bind(team_id.as_uuid())
+        .bind(user_id.as_uuid())
+        .execute(&self.pool)
+        .await
+        .map_err(|_| AppError::internal(DOMAIN_CODE))?;
+        Ok(())
+    }
+
+    async fn remove_member(
+        &self,
+        team_id: crate::domain::TeamId,
+        user_id: UserId,
+    ) -> Result<bool, AppError> {
+        let res = sqlx::query("DELETE FROM org_team_member WHERE team_id = $1 AND user_id = $2")
+            .bind(team_id.as_uuid())
+            .bind(user_id.as_uuid())
+            .execute(&self.pool)
+            .await
+            .map_err(|_| AppError::internal(DOMAIN_CODE))?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    async fn list_members(
+        &self,
+        team_id: crate::domain::TeamId,
+    ) -> Result<Vec<crate::domain::TeamMember>, AppError> {
+        let rows: Vec<(uuid::Uuid, uuid::Uuid, DateTime<Utc>)> = sqlx::query_as(
+            "SELECT team_id, user_id, joined_at FROM org_team_member WHERE team_id = $1 \
+             ORDER BY joined_at",
+        )
+        .bind(team_id.as_uuid())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|_| AppError::internal(DOMAIN_CODE))?;
+        Ok(rows
+            .into_iter()
+            .map(|(team_id, user_id, joined_at)| crate::domain::TeamMember {
+                team_id: crate::domain::TeamId::from_uuid(team_id),
+                user_id: UserId::from_uuid(user_id),
+                joined_at,
             })
             .collect())
     }
@@ -566,8 +698,25 @@ impl crate::domain::SshKeyRepository for PgSshKeyStore {
     }
 }
 
-/// kernel SshKeyDirectory 实现(SSH 服务认证目录)。
-#[async_trait]
+/// kernel SSH 目录扩展实现(T-210 签名验证)。
+#[async_trait::async_trait]
+impl codeplan_kernel::authn::SshKeyDirectoryAll for PgSshKeyStore {
+    async fn all_keys(&self) -> Result<Vec<codeplan_kernel::authn::SshPublicKeyEntry>, String> {
+        let rows = sqlx::query("SELECT fingerprint, public_key FROM org_ssh_key")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|r| codeplan_kernel::authn::SshPublicKeyEntry {
+                fingerprint: r.get("fingerprint"),
+                public_key: r.get("public_key"),
+            })
+            .collect())
+    }
+}
+
+#[async_trait::async_trait]
 impl codeplan_kernel::authn::SshKeyDirectory for PgSshKeyStore {
     async fn user_by_fingerprint(
         &self,

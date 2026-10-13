@@ -44,6 +44,7 @@ const L4: &[&str] = &[
     "git-service",
     // 官方内置插件(随任务追加)
     "plugin-inbox",
+    "plugin-cert-acme",
 ];
 
 /// 目录名 → 允许依赖的内部 crate 目录名列表。

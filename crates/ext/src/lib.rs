@@ -4,6 +4,8 @@
 //! 扩展点:通知渠道([`NotificationChannel`])、部署钩子、CI step、事件订阅、
 //! 权限点、前端扩展点(后四者为 trait 占位,随对应域任务充实)。
 
+pub mod cert;
 pub mod channel;
 
+pub use cert::{CertIssuer, IssuedCert};
 pub use channel::{NotificationChannel, PluginRegistry};

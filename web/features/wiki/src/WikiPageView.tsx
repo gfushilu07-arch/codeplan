@@ -16,7 +16,7 @@ interface PageData {
   html: string;
 }
 
-/** Wiki 页(T-133):文档树 + 页面查看/编辑 + 附件入口(附件 API 见后端,T-115)。 */
+/** Wiki 页(T-133):文档树 + 页面查看/编辑。 */
 export function WikiPageView({ projectId }: { projectId: string }) {
   const [tree, setTree] = useState<WikiTreeNode[] | null>(null);
   const [slug, setSlug] = useState<string | null>(null);
@@ -85,108 +85,101 @@ export function WikiPageView({ projectId }: { projectId: string }) {
     loadTree();
   };
 
-  const renderTree = (nodes: WikiTreeNode[]): React.ReactNode =>
+  const renderTree = (nodes: WikiTreeNode[], depth = 0): React.ReactNode =>
     nodes.map((n) => (
       <div key={n.id}>
-        <div
+        <button
+          className={`cp-nav-list-item${slug === n.slug ? " active" : ""}`}
+          style={{ paddingLeft: 10 + depth * 14 }}
           onClick={() => openPage(n.slug)}
-          style={{
-            cursor: "pointer",
-            padding: "4px 8px",
-            borderRadius: "var(--cp-radius-sm)",
-            color: slug === n.slug ? "var(--cp-color-primary)" : "var(--cp-color-text)",
-            fontSize: 13,
-          }}
         >
-          {n.title}
-        </div>
-        {n.children.length > 0 && (
-          <div style={{ paddingLeft: "var(--cp-space-3)" }}>{renderTree(n.children)}</div>
-        )}
+          <span style={{ fontSize: 13 }}>📄</span>
+          <span className="cp-nowrap">{n.title}</span>
+        </button>
+        {n.children.length > 0 && renderTree(n.children, depth + 1)}
       </div>
     ));
 
   return (
-    <div style={{ display: "flex", gap: "var(--cp-space-3)", alignItems: "flex-start" }}>
-      <aside
-        style={{
-          width: 220,
-          background: "var(--cp-color-bg)",
-          border: "1px solid var(--cp-color-border)",
-          borderRadius: "var(--cp-radius-md)",
-          padding: "var(--cp-space-2)",
-        }}
-      >
-        <div style={{ display: "flex", gap: 4, marginBottom: "var(--cp-space-2)" }}>
-          <input
-            placeholder="新页面 slug"
-            value={newSlug}
-            onChange={(e) => setNewSlug(e.target.value)}
-            style={{
-              flex: 1,
-              border: "1px solid var(--cp-color-border)",
-              borderRadius: "var(--cp-radius-sm)",
-              padding: "4px 6px",
-              fontSize: 12,
-              fontFamily: "var(--cp-font-mono)",
-              background: "var(--cp-color-bg)",
-              color: "var(--cp-color-text)",
-            }}
-          />
-          <button onClick={createPage} style={{ font: "inherit", fontSize: 12, cursor: "pointer" }}>
-            新建
-          </button>
+    <div className="cp-page">
+      <div className="cp-page-head">
+        <div>
+          <h1 className="cp-page-title">Wiki</h1>
+          <div className="cp-page-sub">项目文档与知识库</div>
         </div>
-        {tree ? renderTree(tree) : <div>加载中…</div>}
-      </aside>
-      <section style={{ flex: 1, background: "var(--cp-color-bg)", borderRadius: "var(--cp-radius-md)", padding: "var(--cp-space-3)" }}>
-        {error && <div style={{ color: "var(--cp-color-danger)", fontSize: 13 }}>{error}</div>}
-        {!page && <div style={{ color: "var(--cp-color-text-muted)" }}>从左侧选择或新建页面</div>}
-        {page && !editing && (
-          <>
-            <div style={{ display: "flex", alignItems: "center", gap: "var(--cp-space-2)" }}>
-              <h2 style={{ fontSize: 18, margin: 0 }}>{page.title}</h2>
-              <button onClick={() => setEditing(true)} style={{ font: "inherit", fontSize: 13, cursor: "pointer" }}>
-                编辑
-              </button>
-              <button onClick={remove} style={{ font: "inherit", fontSize: 13, cursor: "pointer", color: "var(--cp-color-danger)" }}>
-                删除
-              </button>
-            </div>
-            <div className="wiki-html" dangerouslySetInnerHTML={{ __html: page.html }} />
-          </>
-        )}
-        {page && editing && (
-          <div style={{ display: "flex", flexDirection: "column", gap: "var(--cp-space-2)" }}>
+      </div>
+
+      {error && <div className="cp-alert cp-alert-danger">{error}</div>}
+
+      <div style={{ display: "flex", gap: "var(--cp-space-4)", alignItems: "flex-start" }}>
+        <aside className="cp-sidebar">
+          <div style={{ display: "flex", gap: 4, marginBottom: "var(--cp-space-2)" }}>
             <input
-              value={draftTitle}
-              onChange={(e) => setDraftTitle(e.target.value)}
-              placeholder="标题"
-              style={{ font: "inherit", padding: "var(--cp-space-2)" }}
+              placeholder="新页面 slug"
+              className="cp-input-sm cp-input-mono"
+              value={newSlug}
+              onChange={(e) => setNewSlug(e.target.value)}
+              style={{ flex: 1 }}
+              onKeyDown={(e) => e.key === "Enter" && void createPage()}
             />
-            <textarea
-              value={draftContent}
-              onChange={(e) => setDraftContent(e.target.value)}
-              rows={16}
-              style={{
-                fontFamily: "var(--cp-font-mono)",
-                fontSize: 13,
-                padding: "var(--cp-space-2)",
-                width: "100%",
-                boxSizing: "border-box",
-              }}
-            />
-            <div style={{ display: "flex", gap: "var(--cp-space-2)" }}>
-              <button onClick={save} style={{ font: "inherit", cursor: "pointer" }}>
-                保存
-              </button>
-              <button onClick={() => setEditing(false)} style={{ font: "inherit", cursor: "pointer" }}>
-                取消
-              </button>
-            </div>
+            <button className="cp-btn cp-btn-sm" onClick={() => void createPage()}>新建</button>
           </div>
-        )}
-      </section>
+          <div className="cp-nav-list">
+            {tree ? (
+              tree.length > 0 ? renderTree(tree) : (
+                <div className="cp-muted" style={{ fontSize: 12, padding: 8 }}>暂无页面</div>
+              )
+            ) : (
+              <div className="cp-muted" style={{ fontSize: 12, padding: 8 }}>加载中…</div>
+            )}
+          </div>
+        </aside>
+
+        <section className="cp-card" style={{ flex: 1, minWidth: 0 }}>
+          {!page && (
+            <div className="cp-empty">
+              <div className="cp-empty-icon">📖</div>
+              <div className="cp-empty-title">从左侧选择或新建页面</div>
+              <div className="cp-empty-hint">Wiki 页面支持 Markdown 语法</div>
+            </div>
+          )}
+
+          {page && !editing && (
+            <>
+              <div className="cp-card-head">
+                <h3 style={{ flex: 1 }}>{page.title}</h3>
+                <button className="cp-btn cp-btn-sm" onClick={() => setEditing(true)}>编辑</button>
+                <button className="cp-btn cp-btn-sm danger" onClick={() => void remove()}>删除</button>
+              </div>
+              <div className="cp-card-body">
+                <div className="wiki-html" dangerouslySetInnerHTML={{ __html: page.html }} />
+              </div>
+            </>
+          )}
+
+          {page && editing && (
+            <div className="cp-card-body cp-col">
+              <input
+                value={draftTitle}
+                onChange={(e) => setDraftTitle(e.target.value)}
+                placeholder="标题"
+                style={{ fontSize: 16, fontWeight: 600, height: 38 }}
+              />
+              <textarea
+                value={draftContent}
+                onChange={(e) => setDraftContent(e.target.value)}
+                rows={18}
+                className="cp-input-mono"
+                style={{ width: "100%" }}
+              />
+              <div className="cp-row">
+                <button className="cp-btn-primary" onClick={() => void save()}>保存</button>
+                <button className="cp-btn" onClick={() => setEditing(false)}>取消</button>
+              </div>
+            </div>
+          )}
+        </section>
+      </div>
     </div>
   );
 }

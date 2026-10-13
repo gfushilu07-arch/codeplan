@@ -18,7 +18,10 @@
     "@codeplan/feature-workitem": "workspace:*",
     "@codeplan/feature-wiki": "workspace:*",
     "@codeplan/feature-repo": "workspace:*",
-    "@codeplan/feature-admin": "workspace:*"
+    "@codeplan/feature-admin": "workspace:*",
+    "@codeplan/feature-insights": "workspace:*",
+    "@codeplan/feature-search": "workspace:*",
+    "@codeplan/feature-appcenter": "workspace:*"
   },
   "devDependencies": {
     "@types/react": "^19",

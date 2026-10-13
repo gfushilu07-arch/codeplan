@@ -16,6 +16,11 @@ impl From<OrgId> for codeplan_kernel::ids::OrgId {
     }
 }
 
+define_id!(
+    /// 团队 ID(组织下的团队分组,ORG-01)。
+    TeamId
+);
+
 /// 用户来源。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UserSource {
@@ -218,20 +223,86 @@ pub struct Organization {
     pub created_at: DateTime<Utc>,
 }
 
-/// 组织仓储抽象。
+/// 团队(组织下的分组,ORG-01)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Team {
+    /// 团队 ID。
+    pub id: TeamId,
+    /// 所属组织。
+    pub org_id: OrgId,
+    /// 团队名(组织内唯一)。
+    pub name: String,
+    /// 创建时间。
+    pub created_at: DateTime<Utc>,
+}
+
+/// 团队成员。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TeamMember {
+    /// 团队 ID。
+    pub team_id: TeamId,
+    /// 成员用户 ID。
+    pub user_id: UserId,
+    /// 加入时间。
+    pub joined_at: DateTime<Utc>,
+}
+
+/// 组织仓储抽象(组织 + 团队 + 成员)。
 #[async_trait::async_trait]
 pub trait OrgRepository: Send + Sync {
     /// 创建组织(名称唯一冲突应返回 `ORG-409`)。
     ///
     /// # Errors
     /// 存储故障或唯一键冲突。
-    async fn create(&self, name: &str) -> Result<Organization, codeplan_common::error::AppError>;
+    async fn create(&self, name: &str) -> Result<Organization, AppError>;
 
     /// 全量组织列表(企业内部量级可控)。
     ///
     /// # Errors
     /// 存储故障。
-    async fn list(&self) -> Result<Vec<Organization>, codeplan_common::error::AppError>;
+    async fn list(&self) -> Result<Vec<Organization>, AppError>;
+
+    /// 按 ID 取组织。
+    ///
+    /// # Errors
+    /// 存储故障。
+    async fn find(&self, id: OrgId) -> Result<Option<Organization>, AppError>;
+
+    /// 在组织下建团队(组织内同名冲突应返回 `ORG-409`)。
+    ///
+    /// # Errors
+    /// 存储故障或唯一键冲突。
+    async fn create_team(&self, org_id: OrgId, name: &str) -> Result<Team, AppError>;
+
+    /// 组织的团队列表。
+    ///
+    /// # Errors
+    /// 存储故障。
+    async fn list_teams(&self, org_id: OrgId) -> Result<Vec<Team>, AppError>;
+
+    /// 按 ID 取团队。
+    ///
+    /// # Errors
+    /// 存储故障。
+    async fn find_team(&self, id: TeamId) -> Result<Option<Team>, AppError>;
+
+    /// 加入团队成员(重复幂等)。
+    ///
+    /// # Errors
+    /// 存储故障。
+    async fn add_member(&self, team_id: TeamId, user_id: UserId) -> Result<(), AppError>;
+
+    /// 移出团队成员,返回是否命中。
+    ///
+    /// # Errors
+    /// 存储故障。
+    async fn remove_member(&self, team_id: TeamId, user_id: UserId) -> Result<bool, AppError>;
+
+    /// 团队成员列表(加入时间正序)。
+    ///
+    /// # Errors
+    /// 存储故障。
+    async fn list_members(&self, team_id: TeamId) -> Result<Vec<TeamMember>, AppError>;
 }
 
 /// 资源级角色(项目/仓库/应用上的成员角色)。

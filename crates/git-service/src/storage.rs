@@ -55,13 +55,44 @@ impl FsBareRepoStore {
             "#!/bin/sh\n# codeplan post-receive(自动生成)\nINPUT=$(cat)\ncurl -s -X POST \\
              '{url}/internal/hooks/post-receive' \\
              -H 'X-Hook-Secret: {secret}' \\
-             -H \"X-Hook-Repo: $GIT_DIR\" \\
+             -H \"X-Hook-Repo: $(pwd)\" \\
              -H 'Content-Type: text/plain' \\
              --data-binary \"$INPUT\" >/dev/null\n",
             url = hook.url,
             secret = hook.secret,
         );
         let hook_path = hooks_dir.join("post-receive");
+        fs::write(&hook_path, script)
+            .await
+            .map_err(|e| e.to_string())?;
+        fs::set_permissions(&hook_path, Permissions::from_mode(0o755))
+            .await
+            .map_err(|e| e.to_string())?;
+        self.install_pre_receive_hook(&hooks_dir, hook).await
+    }
+
+    /// pre-receive 钩子(T-205):平台裁决直推/删除并返回需本地判定
+    /// force push 的引用列表(新对象在隔离区,只有钩子进程可见)。
+    async fn install_pre_receive_hook(
+        &self,
+        hooks_dir: &Path,
+        hook: &HookConfig,
+    ) -> Result<(), String> {
+        let script = format!(
+            "#!/bin/sh\n# codeplan pre-receive(自动生成)\nINPUT=$(cat)\nTMP=$(mktemp)\nCODE=$(curl -s -o \"$TMP\" -w '%{{http_code}}' -X POST \\
+             '{url}/internal/hooks/pre-receive' \\
+             -H 'X-Hook-Secret: {secret}' \\
+             -H \"X-Hook-Repo: $(pwd)\" \\
+             -H 'Content-Type: text/plain' \\
+             --data-binary \"$INPUT\")\n\
+             if [ \"$CODE\" = \"000\" ] || [ -z \"$CODE\" ]; then\n  \
+             echo 'push rejected: 无法回连平台钩子端点({url}),请检查 CODEPLAN_PUBLIC_URL' >&2\n  \
+             rm -f \"$TMP\"\n  exit 1\nfi\n\
+             if [ \"$CODE\" != \"200\" ]; then\n  cat \"$TMP\" >&2 2>/dev/null\n  echo 'push rejected by branch protection' >&2\n  rm -f \"$TMP\"\n  exit 1\nfi\nFORCE_REFS=$(cat \"$TMP\")\nrm -f \"$TMP\"\nZERO=0000000000000000000000000000000000000000\nfor ref in $FORCE_REFS; do\n  set -- $(echo \"$INPUT\" | grep \" $ref$\")\n  old=$1\n  new=$2\n  if [ -n \"$old\" ] && [ \"$old\" != \"$ZERO\" ]; then\n    if ! git merge-base --is-ancestor \"$old\" \"$new\" >/dev/null 2>&1; then\n      echo \"保护分支 ${{ref#refs/heads/}}:禁止 force push\" >&2\n      exit 1\n    fi\n  fi\ndone\n",
+            url = hook.url,
+            secret = hook.secret,
+        );
+        let hook_path = hooks_dir.join("pre-receive");
         fs::write(&hook_path, script)
             .await
             .map_err(|e| e.to_string())?;

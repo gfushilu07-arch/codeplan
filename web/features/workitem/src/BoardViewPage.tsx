@@ -16,8 +16,9 @@ import {
   type BoardItem,
   type ProjectSummary,
 } from "@codeplan/api-client";
+import { statusLabel } from "./status";
 
-/** 看板页(T-132):按状态分列 + 拖拽跨列(调 reorder API,非法流转由后端 409)。 */
+/** 看板页(T-132):按状态分列 + 拖拽跨列(非法流转由后端 409)。 */
 export function BoardViewPage() {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [activeKey, setActiveKey] = useState<string | null>(null);
@@ -50,7 +51,6 @@ export function BoardViewPage() {
     const from = columns.find((c) => c.items.some((i) => i.id === id));
     if (!from || from.status === targetStatus) return;
     setBusy(true);
-    // 乐观更新:先移列,失败回滚重新拉取
     setColumns((cols) =>
       cols.map((c) => {
         if (c.status === from.status) {
@@ -86,33 +86,40 @@ export function BoardViewPage() {
     [projects],
   );
 
+  const total = columns.reduce((acc, c) => acc + c.total, 0);
+
   return (
-    <div>
-      <div style={{ display: "flex", alignItems: "center", gap: "var(--cp-space-2)", marginBottom: "var(--cp-space-3)" }}>
-        <h2 style={{ fontSize: 18, margin: 0 }}>看板</h2>
-        <select
-          value={activeKey ?? ""}
-          onChange={(e) => setActiveKey(e.target.value)}
-          style={{
-            border: "1px solid var(--cp-color-border)",
-            borderRadius: "var(--cp-radius-md)",
-            padding: "4px 8px",
-            background: "var(--cp-color-bg)",
-            color: "var(--cp-color-text)",
-            font: "inherit",
-            fontSize: 13,
-          }}
-        >
-          {projectOptions}
-        </select>
-        {busy && <span style={{ fontSize: 12, color: "var(--cp-color-text-muted)" }}>同步中…</span>}
+    <div className="cp-page">
+      <div className="cp-page-head">
+        <div>
+          <h1 className="cp-page-title">项目看板</h1>
+          <div className="cp-page-sub">拖拽卡片可跨列流转状态</div>
+        </div>
+        <div className="cp-page-actions">
+          <select value={activeKey ?? ""} onChange={(e) => setActiveKey(e.target.value)}>
+            {projectOptions}
+          </select>
+          {busy && <span className="cp-muted" style={{ fontSize: 12 }}>同步中…</span>}
+          <span className="cp-badge cp-badge-neutral">共 {total} 项</span>
+        </div>
       </div>
-      {error && <div style={{ color: "var(--cp-color-danger)", fontSize: 13, marginBottom: 8 }}>{error}</div>}
+
+      {error && <div className="cp-alert cp-alert-danger">{error}</div>}
+
       <DndContext sensors={sensors} onDragEnd={onDragEnd}>
-        <div style={{ display: "flex", gap: "var(--cp-space-3)", alignItems: "flex-start" }}>
+        <div className="cp-board">
           {columns.map((col) => (
             <BoardColumnView key={col.status} column={col} />
           ))}
+          {columns.length === 0 && (
+            <div className="cp-card" style={{ flex: 1 }}>
+              <div className="cp-empty">
+                <div className="cp-empty-icon">▦</div>
+                <div className="cp-empty-title">暂无看板数据</div>
+                <div className="cp-empty-hint">请选择包含工作项的项目</div>
+              </div>
+            </div>
+          )}
         </div>
       </DndContext>
     </div>
@@ -122,35 +129,19 @@ export function BoardViewPage() {
 function BoardColumnView({ column }: { column: BoardColumn }) {
   const { setNodeRef } = useDroppable({ id: column.status });
   return (
-    <div
-      ref={setNodeRef}
-      style={{
-        flex: 1,
-        minWidth: 240,
-        background: "var(--cp-color-surface)",
-        border: "1px solid var(--cp-color-border)",
-        borderRadius: "var(--cp-radius-md)",
-        padding: "var(--cp-space-2)",
-      }}
-    >
-      <div
-        style={{
-          fontSize: 13,
-          fontWeight: 600,
-          color: "var(--cp-color-text-muted)",
-          marginBottom: "var(--cp-space-2)",
-          display: "flex",
-          justifyContent: "space-between",
-        }}
-      >
-        <span>{column.status}</span>
-        <span>{column.total}</span>
+    <div ref={setNodeRef} className="cp-board-col">
+      <div className="cp-board-col-head">
+        <span>{statusLabel(column.status)}</span>
+        <span className="count">{column.total}</span>
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: "var(--cp-space-2)" }}>
-        {column.items.map((item) => (
-          <BoardCard key={item.id} item={item} />
-        ))}
-      </div>
+      {column.items.map((item) => (
+        <BoardCard key={item.id} item={item} />
+      ))}
+      {column.items.length === 0 && (
+        <div className="cp-muted" style={{ fontSize: 12, padding: "12px 6px", textAlign: "center" }}>
+          拖拽到此列
+        </div>
+      )}
     </div>
   );
 }
@@ -162,22 +153,19 @@ function BoardCard({ item }: { item: BoardItem }) {
       ref={setNodeRef}
       {...attributes}
       {...listeners}
-      style={{
-        background: "var(--cp-color-bg)",
-        border: "1px solid var(--cp-color-border)",
-        borderRadius: "var(--cp-radius-md)",
-        padding: "var(--cp-space-2)",
-        fontSize: 13,
-        cursor: isDragging ? "grabbing" : "grab",
-        opacity: isDragging ? 0.5 : 1,
-        boxShadow: "var(--cp-shadow-1)",
-        color: "var(--cp-color-text)",
-      }}
+      className={`cp-board-card${isDragging ? " dragging" : ""}`}
     >
-      <div style={{ fontFamily: "var(--cp-font-mono)", fontSize: 11, color: "var(--cp-color-text-muted)" }}>
-        #{item.number}
-      </div>
-      <div>{item.title}</div>
+      <div className="key">#{item.number}</div>
+      <div className="title">{item.title}</div>
+      {/* 阻止 pointerdown 冒泡,避免被 dnd-kit 当作拖拽起点而吞掉点击 */}
+      <a
+        href={`#/item/${item.id}`}
+        className="cp-muted"
+        style={{ fontSize: 12, alignSelf: "flex-start" }}
+        onPointerDown={(e) => e.stopPropagation()}
+      >
+        详情 →
+      </a>
     </div>
   );
 }

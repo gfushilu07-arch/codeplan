@@ -1,0 +1,104 @@
+// 部署 agent 协议(T-311 / PAAS-03)。
+//
+// 方向约定:agent 部署在目标主机上,**主动外连**平台(主机侧零入站端口);
+// 因此平台侧是 gRPC server,agent 是 client。命令经服务端流下发,
+// agent 持有长连接以便平台随时投递部署任务(T-313)。
+syntax = "proto3";
+
+package codeplan.agent.v1;
+
+service AgentGateway {
+  // 注册:agent 首次上线用一次性 token 换取 host_id。
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  // 心跳:上报存活与资源概况(平台据此判定在线/离线)。
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  // 命令通道:agent 持流等待平台下发命令。
+  rpc Watch(WatchRequest) returns (stream Command);
+  // 命令回执:agent 执行完毕上报结果(T-313 部署执行)。
+  rpc ReportCommand(ReportCommandRequest) returns (ReportCommandResponse);
+  // 事件推流:agent 持续上报部署进度与容器日志(T-314 部署可观测)。
+  rpc PushEvents(stream AgentEvent) returns (PushEventsResponse);
+}
+
+message RegisterRequest {
+  // 一次性注册令牌(平台在"登记主机"时下发,仅可成功注册一次)。
+  string token = 1;
+  // 主机名(agent 侧 hostname)。
+  string hostname = 2;
+  // agent 版本。
+  string agent_version = 3;
+  // 主机标签(用于调度选择)。
+  repeated string labels = 4;
+}
+
+message RegisterResponse {
+  // 平台侧主机 ID。
+  string host_id = 1;
+  // 平台建议的心跳间隔(秒)。
+  int64 heartbeat_interval_secs = 2;
+}
+
+message HeartbeatRequest {
+  string host_id = 1;
+  // 资源概况(可选)。
+  HostStatus status = 2;
+}
+
+message HostStatus {
+  double cpu_percent = 1;
+  uint64 mem_used_mb = 2;
+  uint64 mem_total_mb = 3;
+  uint32 container_count = 4;
+  // 容器运行时是否可用(如 Docker 可达)。
+  bool runtime_ready = 5;
+}
+
+message HeartbeatResponse {
+  bool ok = 1;
+}
+
+message WatchRequest {
+  string host_id = 1;
+}
+
+message ReportCommandRequest {
+  string host_id = 1;
+  // 对应 Command.id。
+  string command_id = 2;
+  // 是否成功。
+  bool ok = 3;
+  // 结果摘要(成功为部署摘要,失败为错误信息)。
+  string message = 4;
+  // 结构化结果(JSON 文本;如各容器状态)。
+  string result_json = 5;
+}
+
+message ReportCommandResponse {
+  bool ok = 1;
+}
+
+message AgentEvent {
+  string host_id = 1;
+  // 关联的部署 ID(可空:非部署期的运维日志)。
+  string deployment_id = 2;
+  // 事件类型:status | log。
+  string kind = 3;
+  // 内容(状态摘要或日志行)。
+  string message = 4;
+  // 发生时刻(RFC 3339)。
+  string at = 5;
+}
+
+message PushEventsResponse {
+  // 平台已接收的事件数(便于 agent 侧确认)。
+  uint64 accepted = 1;
+}
+
+message Command {
+  // 命令 ID(agent 回执用)。
+  string id = 1;
+  // 命令类型(如 deploy/stop/health)。
+  string kind = 2;
+  // 命令载荷(JSON 文本;由具体命令定义)。
+  string payload_json = 3;
+}

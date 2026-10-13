@@ -6,3 +6,21 @@ license.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+axum.workspace = true
+bollard = "0.21.1"
+codeplan-common = { workspace = true, features = ["axum"] }
+codeplan-kernel.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+serde_yaml = "0.9.34"
+futures-util.workspace = true
+tokio = { workspace = true, features = ["process", "io-util", "macros", "rt"] }
+uuid.workspace = true
+chrono.workspace = true
+sha2 = "0.11.0"
+codeplan-storage = { version = "0.1.0", path = "../storage" }
+base64.workspace = true
+utoipa.workspace = true

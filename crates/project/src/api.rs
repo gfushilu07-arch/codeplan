@@ -25,6 +25,8 @@ pub struct ProjectState {
     pub svc: Arc<ProjectService>,
     /// 令牌认证器(实现由 server 注入 identity)。
     pub authn: Arc<dyn TokenAuthenticator>,
+    /// 提交链接仓储(T-207 反向展示)。
+    pub links: Option<Arc<crate::infra::PgCommitLinkStore>>,
 }
 
 /// 路由(自带认证中间件;server 侧 `.with_state` 后聚合)。
@@ -37,7 +39,32 @@ pub fn routes(state: ProjectState) -> Router<ProjectState> {
         )
         .route("/api/projects/{key}/items/{number}", get(get_item))
         .route("/api/workitems/{id}/transition", post(transition))
-        .route("/api/workitems/{id}", axum::routing::patch(update_item))
+        .route(
+            "/api/workitems/{id}",
+            axum::routing::patch(update_item).get(get_item_by_id),
+        )
+        .route("/api/workitems/{id}/transitions", get(item_transitions))
+        .route(
+            "/api/workitems/{id}/comments",
+            get(list_comments).post(add_comment),
+        )
+        .route(
+            "/api/workitems/{id}/comments/{comment_id}",
+            axum::routing::delete(delete_comment),
+        )
+        .route(
+            "/api/workitems/{id}/worklogs",
+            get(list_worklogs).post(log_work),
+        )
+        .route(
+            "/api/workitems/{id}/worklogs/summary",
+            get(worklog_summary),
+        )
+        .route(
+            "/api/workitems/{id}/worklogs/{worklog_id}",
+            axum::routing::delete(delete_worklog),
+        )
+        .route("/api/workitems/{id}/commits", get(item_commits))
         .route(
             "/api/projects/{key}/sprints",
             post(create_sprint).get(list_sprints),
@@ -125,6 +152,10 @@ pub struct ItemResponse {
     pub assignee: Option<String>,
     /// 自定义字段。
     pub custom_fields: serde_json::Value,
+    /// 创建时间(RFC 3339)。
+    pub created_at: String,
+    /// 更新时间(RFC 3339)。
+    pub updated_at: String,
 }
 
 /// 创建工作项请求。
@@ -186,6 +217,8 @@ fn item_response(item: &crate::domain::WorkItem) -> ItemResponse {
         priority: item.priority.as_str().to_owned(),
         assignee: item.assignee.map(|u| u.as_uuid().to_string()),
         custom_fields: item.custom_fields.clone(),
+        created_at: chrono::DateTime::to_rfc3339(&item.created_at),
+        updated_at: chrono::DateTime::to_rfc3339(&item.updated_at),
     }
 }
 
@@ -343,6 +376,35 @@ async fn get_item(
         .find(|i| i.item_number == p.number)
         .ok_or_else(|| AppError::not_found(DOMAIN_CODE, "工作项不存在"))?;
     Ok(Json(ApiResponse::ok(item_response(&item))))
+}
+
+/// 工作项关联提交(反向展示,T-207)。
+async fn item_commits(
+    Extension(user): Extension<CurrentUser>,
+    State(st): State<ProjectState>,
+    Path(id): Path<String>,
+) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
+    let _ = user;
+    let Some(links) = st.links.as_ref() else {
+        return Ok(Json(ApiResponse::ok(serde_json::json!([]))));
+    };
+    let Ok(item_id) = crate::domain::WorkItemId::try_from(id.as_str()) else {
+        return Err(AppError::invalid(DOMAIN_CODE, "ID 非法"));
+    };
+    let list = crate::listen::item_commits(links, item_id)
+        .await
+        .map_err(|e| AppError::internal(DOMAIN_CODE).with_details(serde_json::json!(e)))?;
+    Ok(Json(ApiResponse::ok(serde_json::json!(
+        list.iter()
+            .map(|c| serde_json::json!({
+                "sha": c.commit_sha,
+                "subject": c.subject,
+                "repo": c.full_name,
+                "ref": c.ref_name,
+                "created_at": c.created_at.to_rfc3339(),
+            }))
+            .collect::<Vec<_>>()
+    ))))
 }
 
 /// 工作项状态流转。
@@ -843,4 +905,338 @@ async fn my_items(
             })
             .collect(),
     )))
+}
+
+// ---------- 工作项详情 / 评论(T-132) ----------
+
+/// 工作项详情响应(详情页;含描述等列表不需要的字段)。
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ItemDetailResponse {
+    /// 工作项 ID。
+    pub id: String,
+    /// 项目内编号。
+    pub number: i64,
+    /// 项目 ID。
+    pub project_id: String,
+    /// 类型。
+    pub item_type: String,
+    /// 标题。
+    pub title: String,
+    /// 描述(Markdown)。
+    pub description: String,
+    /// 状态。
+    pub status: String,
+    /// 优先级。
+    pub priority: String,
+    /// 经办人。
+    pub assignee: Option<String>,
+    /// 报告人。
+    pub reporter: Option<String>,
+    /// 父工作项。
+    pub parent_id: Option<String>,
+    /// 自定义字段。
+    pub custom_fields: serde_json::Value,
+    /// 创建时间。
+    pub created_at: String,
+    /// 更新时间。
+    pub updated_at: String,
+}
+
+fn item_detail_response(item: &crate::domain::WorkItem) -> ItemDetailResponse {
+    ItemDetailResponse {
+        id: item.id.as_uuid().to_string(),
+        number: item.item_number,
+        project_id: item.project_id.as_uuid().to_string(),
+        item_type: item.item_type.as_str().to_owned(),
+        title: item.title.clone(),
+        description: item.description.clone(),
+        status: item.status.clone(),
+        priority: item.priority.as_str().to_owned(),
+        assignee: item.assignee.map(|u| u.as_uuid().to_string()),
+        reporter: item.reporter.map(|u| u.as_uuid().to_string()),
+        parent_id: item.parent_id.map(|p| p.as_uuid().to_string()),
+        custom_fields: item.custom_fields.clone(),
+        created_at: chrono::DateTime::to_rfc3339(&item.created_at),
+        updated_at: chrono::DateTime::to_rfc3339(&item.updated_at),
+    }
+}
+
+/// 评论响应。
+#[derive(Debug, Serialize, ToSchema)]
+pub struct CommentResponse {
+    /// 评论 ID。
+    pub id: String,
+    /// 所属工作项 ID。
+    pub work_item_id: String,
+    /// 作者(系统评论为空)。
+    pub author: Option<String>,
+    /// 正文。
+    pub body: String,
+    /// 创建时间。
+    pub created_at: String,
+}
+
+fn comment_response(c: &crate::domain::WorkItemComment) -> CommentResponse {
+    CommentResponse {
+        id: c.id.as_uuid().to_string(),
+        work_item_id: c.work_item_id.as_uuid().to_string(),
+        author: c.author_id.map(|u| u.as_uuid().to_string()),
+        body: c.body.clone(),
+        created_at: chrono::DateTime::to_rfc3339(&c.created_at),
+    }
+}
+
+/// 新增评论请求。
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct CreateCommentRequest {
+    /// 正文(Markdown)。
+    pub body: String,
+}
+
+/// 评论路径参数。
+#[derive(Debug, Deserialize)]
+pub struct CommentPath {
+    /// 工作项 ID。
+    pub id: String,
+    /// 评论 ID。
+    pub comment_id: String,
+}
+
+fn parse_item_id(raw: &str) -> Result<crate::domain::WorkItemId, AppError> {
+    crate::domain::WorkItemId::try_from(raw)
+        .map_err(|_| AppError::invalid(DOMAIN_CODE, "工作项 ID 非法"))
+}
+
+/// 工作项详情(按 ID)。
+#[utoipa::path(
+    get,
+    path = "/api/workitems/{id}",
+    params(("id" = String, Path, description = "工作项 ID")),
+    responses((status = 200, body = ItemDetailResponse), (status = 404))
+)]
+async fn get_item_by_id(
+    Extension(user): Extension<CurrentUser>,
+    State(st): State<ProjectState>,
+    Path(id): Path<String>,
+) -> Result<Json<ApiResponse<ItemDetailResponse>>, AppError> {
+    let item = st.svc.item_by_id(&user, parse_item_id(&id)?).await?;
+    Ok(Json(ApiResponse::ok(item_detail_response(&item))))
+}
+
+/// 当前可流转目标状态(由服务端状态机裁定)。
+#[utoipa::path(
+    get,
+    path = "/api/workitems/{id}/transitions",
+    params(("id" = String, Path)),
+    responses((status = 200))
+)]
+async fn item_transitions(
+    Extension(user): Extension<CurrentUser>,
+    State(st): State<ProjectState>,
+    Path(id): Path<String>,
+) -> Result<Json<ApiResponse<Vec<String>>>, AppError> {
+    let targets = st.svc.transitions_for(&user, parse_item_id(&id)?).await?;
+    Ok(Json(ApiResponse::ok(targets)))
+}
+
+/// 评论列表(时间正序)。
+#[utoipa::path(
+    get,
+    path = "/api/workitems/{id}/comments",
+    params(("id" = String, Path)),
+    responses((status = 200, body = CommentResponse))
+)]
+async fn list_comments(
+    Extension(user): Extension<CurrentUser>,
+    State(st): State<ProjectState>,
+    Path(id): Path<String>,
+) -> Result<Json<ApiResponse<Vec<CommentResponse>>>, AppError> {
+    let list = st.svc.list_comments(&user, parse_item_id(&id)?).await?;
+    Ok(Json(ApiResponse::ok(
+        list.iter().map(comment_response).collect(),
+    )))
+}
+
+/// 新增评论。
+#[utoipa::path(
+    post,
+    path = "/api/workitems/{id}/comments",
+    request_body = CreateCommentRequest,
+    params(("id" = String, Path)),
+    responses((status = 200, body = CommentResponse), (status = 403))
+)]
+async fn add_comment(
+    Extension(user): Extension<CurrentUser>,
+    State(st): State<ProjectState>,
+    Path(id): Path<String>,
+    Json(req): Json<CreateCommentRequest>,
+) -> Result<Json<ApiResponse<CommentResponse>>, AppError> {
+    let comment = st
+        .svc
+        .add_comment(&user, parse_item_id(&id)?, &req.body)
+        .await?;
+    Ok(Json(ApiResponse::ok(comment_response(&comment))))
+}
+
+/// 删除评论(作者本人或项目写权限)。
+#[utoipa::path(
+    delete,
+    path = "/api/workitems/{id}/comments/{comment_id}",
+    params(("id" = String, Path), ("comment_id" = String, Path)),
+    responses((status = 200), (status = 403), (status = 404))
+)]
+async fn delete_comment(
+    Extension(user): Extension<CurrentUser>,
+    State(st): State<ProjectState>,
+    Path(p): Path<CommentPath>,
+) -> Result<Json<ApiResponse<()>>, AppError> {
+    let _ = parse_item_id(&p.id)?;
+    let comment_id = crate::domain::CommentId::try_from(p.comment_id.as_str())
+        .map_err(|_| AppError::invalid(DOMAIN_CODE, "评论 ID 非法"))?;
+    st.svc.delete_comment(&user, comment_id).await?;
+    Ok(Json(ApiResponse {
+        code: "OK".to_owned(),
+        message: "已删除".to_owned(),
+        data: None,
+    }))
+}
+
+// ---------- 工时(T-318 / PM-09) ----------
+
+/// 登记工时请求。
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct LogWorkRequest {
+    /// 用时(分钟,1 ~ 1440)。
+    pub minutes: i64,
+    /// 备注。
+    #[serde(default)]
+    pub note: String,
+    /// 工作日期(YYYY-MM-DD;缺省今天)。
+    #[serde(default)]
+    pub spent_on: Option<String>,
+}
+
+/// 工时响应。
+#[derive(Debug, Serialize, ToSchema)]
+pub struct WorklogResponse {
+    /// 记录 ID。
+    pub id: String,
+    /// 工作项 ID。
+    pub work_item_id: String,
+    /// 登记人。
+    pub author: Option<String>,
+    /// 用时(分钟)。
+    pub minutes: i64,
+    /// 备注。
+    pub note: String,
+    /// 工作日期。
+    pub spent_on: String,
+    /// 创建时间。
+    pub created_at: String,
+}
+
+fn worklog_response(l: &crate::domain::Worklog) -> WorklogResponse {
+    WorklogResponse {
+        id: l.id.as_uuid().to_string(),
+        work_item_id: l.work_item_id.as_uuid().to_string(),
+        author: l.author_id.map(|u| u.as_uuid().to_string()),
+        minutes: l.minutes,
+        note: l.note.clone(),
+        spent_on: l.spent_on.to_string(),
+        created_at: chrono::DateTime::to_rfc3339(&l.created_at),
+    }
+}
+
+/// 工时记录路径参数。
+#[derive(Debug, Deserialize)]
+pub struct WorklogPath {
+    /// 工作项 ID。
+    pub id: String,
+    /// 工时记录 ID。
+    pub worklog_id: String,
+}
+
+/// 登记工时。
+#[utoipa::path(
+    post,
+    path = "/api/workitems/{id}/worklogs",
+    request_body = LogWorkRequest,
+    params(("id" = String, Path)),
+    responses((status = 200, body = WorklogResponse), (status = 400))
+)]
+async fn log_work(
+    Extension(user): Extension<CurrentUser>,
+    State(st): State<ProjectState>,
+    Path(id): Path<String>,
+    Json(req): Json<LogWorkRequest>,
+) -> Result<Json<ApiResponse<WorklogResponse>>, AppError> {
+    let spent_on = match req.spent_on.as_deref() {
+        Some(s) if !s.trim().is_empty() => Some(
+            chrono::NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d")
+                .map_err(|_| AppError::invalid(DOMAIN_CODE, "日期格式应为 YYYY-MM-DD"))?,
+        ),
+        _ => None,
+    };
+    let log = st
+        .svc
+        .log_work(&user, parse_item_id(&id)?, req.minutes, &req.note, spent_on)
+        .await?;
+    Ok(Json(ApiResponse::ok(worklog_response(&log))))
+}
+
+/// 工时明细。
+#[utoipa::path(
+    get,
+    path = "/api/workitems/{id}/worklogs",
+    params(("id" = String, Path)),
+    responses((status = 200, body = WorklogResponse))
+)]
+async fn list_worklogs(
+    Extension(user): Extension<CurrentUser>,
+    State(st): State<ProjectState>,
+    Path(id): Path<String>,
+) -> Result<Json<ApiResponse<Vec<WorklogResponse>>>, AppError> {
+    let list = st.svc.list_worklogs(&user, parse_item_id(&id)?).await?;
+    Ok(Json(ApiResponse::ok(
+        list.iter().map(worklog_response).collect(),
+    )))
+}
+
+/// 工时汇总。
+#[utoipa::path(
+    get,
+    path = "/api/workitems/{id}/worklogs/summary",
+    params(("id" = String, Path)),
+    responses((status = 200))
+)]
+async fn worklog_summary(
+    Extension(user): Extension<CurrentUser>,
+    State(st): State<ProjectState>,
+    Path(id): Path<String>,
+) -> Result<Json<ApiResponse<crate::domain::WorklogSummary>>, AppError> {
+    let s = st.svc.worklog_summary(&user, parse_item_id(&id)?).await?;
+    Ok(Json(ApiResponse::ok(s)))
+}
+
+/// 删除工时。
+#[utoipa::path(
+    delete,
+    path = "/api/workitems/{id}/worklogs/{worklog_id}",
+    params(("id" = String, Path), ("worklog_id" = String, Path)),
+    responses((status = 200), (status = 403), (status = 404))
+)]
+async fn delete_worklog(
+    Extension(user): Extension<CurrentUser>,
+    State(st): State<ProjectState>,
+    Path(p): Path<WorklogPath>,
+) -> Result<Json<ApiResponse<()>>, AppError> {
+    let _ = parse_item_id(&p.id)?;
+    let wid = crate::domain::WorklogId::try_from(p.worklog_id.as_str())
+        .map_err(|_| AppError::invalid(DOMAIN_CODE, "工时 ID 非法"))?;
+    st.svc.delete_worklog(&user, wid).await?;
+    Ok(Json(ApiResponse {
+        code: "OK".to_owned(),
+        message: "已删除".to_owned(),
+        data: None,
+    }))
 }

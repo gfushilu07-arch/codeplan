@@ -15,10 +15,21 @@ codeplan-kernel.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 rand.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+async-nats.workspace = true
+futures-util.workspace = true
 sqlx.workspace = true
-tokio = { workspace = true, features = ["process", "fs"] }
+tokio = { workspace = true, features = ["process", "fs", "time"] }
 utoipa.workspace = true
 uuid.workspace = true
+hmac = "0.12"
+sha2 = "0.10"
+codeplan-storage = { version = "0.1.0", path = "../storage" }
+sequoia-openpgp = { version = "2.4.1", default-features = false, features = [
+    "crypto-rust",
+    "allow-experimental-crypto",
+    "allow-variable-time-crypto",
+] }
 
 [dev-dependencies]
 

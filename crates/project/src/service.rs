@@ -15,12 +15,30 @@ use crate::domain::{
 };
 use crate::workflow::StateMachine;
 
+/// 项目域仓储集合(收拢构造函数参数,避免签名膨胀)。
+pub struct ProjectStores {
+    /// 项目。
+    pub projects: Arc<dyn ProjectRepository>,
+    /// 工作项。
+    pub items: Arc<dyn WorkItemRepository>,
+    /// 迭代。
+    pub sprints: Arc<dyn crate::domain::SprintRepository>,
+    /// 里程碑。
+    pub milestones: Arc<dyn crate::domain::MilestoneRepository>,
+    /// 评论。
+    pub comments: Arc<dyn crate::domain::CommentRepository>,
+    /// 工时。
+    pub worklogs: Arc<dyn crate::domain::WorklogRepository>,
+}
+
 /// 项目域服务。
 pub struct ProjectService {
     projects: Arc<dyn ProjectRepository>,
     items: Arc<dyn WorkItemRepository>,
     sprints: Arc<dyn crate::domain::SprintRepository>,
     milestones: Arc<dyn crate::domain::MilestoneRepository>,
+    comments: Arc<dyn crate::domain::CommentRepository>,
+    worklogs: Arc<dyn crate::domain::WorklogRepository>,
     authz: Arc<dyn Authz>,
     events: Arc<dyn codeplan_kernel::events::EventBus>,
 }
@@ -38,18 +56,17 @@ impl ProjectService {
     /// 构造。
     #[must_use]
     pub fn new(
-        projects: Arc<dyn ProjectRepository>,
-        items: Arc<dyn WorkItemRepository>,
-        sprints: Arc<dyn crate::domain::SprintRepository>,
-        milestones: Arc<dyn crate::domain::MilestoneRepository>,
+        stores: ProjectStores,
         authz: Arc<dyn Authz>,
         events: Arc<dyn codeplan_kernel::events::EventBus>,
     ) -> Self {
         Self {
-            projects,
-            items,
-            sprints,
-            milestones,
+            projects: stores.projects,
+            items: stores.items,
+            sprints: stores.sprints,
+            milestones: stores.milestones,
+            comments: stores.comments,
+            worklogs: stores.worklogs,
             authz,
             events,
         }
@@ -378,6 +395,42 @@ impl ProjectService {
     ///
     /// # Errors
     /// 非法流转返回 `PM-409`;无权限 `PM-403`;不存在 `PM-404`。
+    /// 系统自动流转(合并关联等自动化;无 RBAC,事件 actor = system)。
+    /// 按状态机 BFS 最短路径逐步流转(如 open → in_progress → resolved)。
+    ///
+    /// # Errors
+    /// 工作项不存在 `PM-404`;不可达 `PM-409`;存储故障。
+    pub async fn transition_system(
+        &self,
+        item_id: crate::domain::WorkItemId,
+        to: &str,
+    ) -> Result<WorkItem, AppError> {
+        let item = self
+            .items
+            .find_by_id(item_id)
+            .await?
+            .ok_or_else(|| AppError::not_found(DOMAIN_CODE, "工作项不存在"))?;
+        if item.status == to {
+            return Ok(item);
+        }
+        let sm = StateMachine::builtin(item.item_type);
+        let Some(path) = sm.path(&item.status, to) else {
+            return Err(AppError::conflict(
+                DOMAIN_CODE,
+                format!("不可达:{} → {}", item.status, to),
+            ));
+        };
+        let mut current = item;
+        for step in path {
+            current = self.do_transition(current, &step, None).await?;
+        }
+        Ok(current)
+    }
+
+    /// 手动流转(RBAC Write;发布 `workitem.status_changed`)。
+    ///
+    /// # Errors
+    /// 工作项不存在 `PM-404`;非法流转 `PM-409`;无权限 `PM-403`。
     pub async fn transition(
         &self,
         actor: &CurrentUser,
@@ -390,6 +443,16 @@ impl ProjectService {
             .await?
             .ok_or_else(|| AppError::not_found(DOMAIN_CODE, "工作项不存在"))?;
         self.ensure(actor, Action::Write, item.project_id).await?;
+        self.do_transition(item, to, Some(actor.id)).await
+    }
+
+    /// 流转核心:状态机 + 缺陷门禁 + 事件(actor 为空 = system)。
+    async fn do_transition(
+        &self,
+        item: WorkItem,
+        to: &str,
+        actor: Option<codeplan_kernel::ids::UserId>,
+    ) -> Result<WorkItem, AppError> {
         let sm = StateMachine::builtin(item.item_type);
         if !sm.can_transition(&item.status, to) {
             return Err(AppError::conflict(
@@ -397,8 +460,9 @@ impl ProjectService {
                 format!("非法流转:{} → {}", item.status, to),
             ));
         }
-        // 缺陷门禁:流转到 resolved 须有复现步骤(T-114)
-        if item.item_type == ItemType::Bug && to == "resolved" {
+        // 缺陷门禁:流转到 resolved 须有复现步骤(T-114);
+        // 系统自动流转(合并即修复)豁免
+        if actor.is_some() && item.item_type == ItemType::Bug && to == "resolved" {
             let fields = crate::domain::BugFields::from_custom_fields(&item.custom_fields)?;
             if !fields.ready_to_resolve() {
                 return Err(AppError::invalid(
@@ -407,7 +471,7 @@ impl ProjectService {
                 ));
             }
         }
-        let updated = self.items.update_status(item_id, to).await?;
+        let updated = self.items.update_status(item.id, to).await?;
         let _ = self
             .events
             .publish(vec![
@@ -423,7 +487,11 @@ impl ProjectService {
                         "reporter": item.reporter.map(|u| u.as_uuid()),
                     }),
                 )
-                .with_actor(actor.id.as_uuid().to_string()),
+                .with_actor(
+                    actor
+                        .map(|u| u.as_uuid().to_string())
+                        .unwrap_or_else(|| "system".to_owned()),
+                ),
             ])
             .await;
         Ok(updated)
@@ -664,6 +732,237 @@ impl ProjectService {
     /// 存储故障。
     pub async fn my_items(&self, actor: &CurrentUser) -> Result<Vec<WorkItem>, AppError> {
         self.items.list_for_user(actor.id).await
+    }
+
+    /// 工作项详情(按 ID;含描述等全字段,供详情页)。
+    ///
+    /// # Errors
+    /// 工作项不存在 `PM-404`;无读权限 `PM-403`。
+    pub async fn item_by_id(
+        &self,
+        actor: &CurrentUser,
+        item_id: crate::domain::WorkItemId,
+    ) -> Result<WorkItem, AppError> {
+        let item = self
+            .items
+            .find_by_id(item_id)
+            .await?
+            .ok_or_else(|| AppError::not_found(DOMAIN_CODE, "工作项不存在"))?;
+        self.ensure(actor, Action::Read, item.project_id).await?;
+        Ok(item)
+    }
+
+    /// 当前状态下可流转的目标状态(详情页按钮由服务端状态机裁定,避免前后端漂移)。
+    ///
+    /// # Errors
+    /// 工作项不存在 `PM-404`;无读权限 `PM-403`。
+    pub async fn transitions_for(
+        &self,
+        actor: &CurrentUser,
+        item_id: crate::domain::WorkItemId,
+    ) -> Result<Vec<String>, AppError> {
+        let item = self.item_by_id(actor, item_id).await?;
+        let sm = StateMachine::builtin(item.item_type);
+        Ok(sm
+            .states()
+            .iter()
+            .filter(|s| sm.can_transition(&item.status, s))
+            .cloned()
+            .collect())
+    }
+
+    /// 新增评论(发布 `workitem.commented`)。
+    ///
+    /// # Errors
+    /// 工作项不存在 `PM-404`;无写权限 `PM-403`;正文为空 `PM-400`。
+    pub async fn add_comment(
+        &self,
+        actor: &CurrentUser,
+        item_id: crate::domain::WorkItemId,
+        body: &str,
+    ) -> Result<crate::domain::WorkItemComment, AppError> {
+        let body = body.trim();
+        if body.is_empty() {
+            return Err(AppError::invalid(DOMAIN_CODE, "评论内容不能为空"));
+        }
+        let item = self
+            .items
+            .find_by_id(item_id)
+            .await?
+            .ok_or_else(|| AppError::not_found(DOMAIN_CODE, "工作项不存在"))?;
+        self.ensure(actor, Action::Write, item.project_id).await?;
+        let comment = self
+            .comments
+            .add(&crate::domain::NewComment {
+                work_item_id: item_id,
+                author_id: Some(actor.id),
+                body: body.to_owned(),
+            })
+            .await?;
+        let _ = self
+            .events
+            .publish(vec![
+                EventEnvelope::new(
+                    "workitem.commented",
+                    json!({
+                        "id": item.id.as_uuid(),
+                        "project_id": item.project_id.as_uuid(),
+                        "number": item.item_number,
+                        "comment_id": comment.id.as_uuid(),
+                        "author": actor.id.as_uuid(),
+                    }),
+                )
+                .with_actor(actor.id.as_uuid().to_string()),
+            ])
+            .await;
+        Ok(comment)
+    }
+
+    /// 评论列表(时间正序)。
+    ///
+    /// # Errors
+    /// 工作项不存在 `PM-404`;无读权限 `PM-403`。
+    pub async fn list_comments(
+        &self,
+        actor: &CurrentUser,
+        item_id: crate::domain::WorkItemId,
+    ) -> Result<Vec<crate::domain::WorkItemComment>, AppError> {
+        let item = self.item_by_id(actor, item_id).await?;
+        let _ = item;
+        self.comments.list_by_item(item_id).await
+    }
+
+    /// 删除评论(作者本人或项目 Write 权限)。
+    ///
+    /// # Errors
+    /// 评论不存在 `PM-404`;非作者且无写权限 `PM-403`。
+    pub async fn delete_comment(
+        &self,
+        actor: &CurrentUser,
+        comment_id: crate::domain::CommentId,
+    ) -> Result<(), AppError> {
+        let comment = self
+            .comments
+            .find_by_id(comment_id)
+            .await?
+            .ok_or_else(|| AppError::not_found(DOMAIN_CODE, "评论不存在"))?;
+        let item = self
+            .items
+            .find_by_id(comment.work_item_id)
+            .await?
+            .ok_or_else(|| AppError::not_found(DOMAIN_CODE, "工作项不存在"))?;
+        if comment.author_id != Some(actor.id) {
+            self.ensure(actor, Action::Write, item.project_id).await?;
+        }
+        self.comments.delete(comment_id).await?;
+        Ok(())
+    }
+
+    /// 登记工时(单条上限 24 小时,发布 `workitem.worklogged`)。
+    ///
+    /// # Errors
+    /// 工作项不存在 `PM-404`;无写权限 `PM-403`;用时非法 `PM-400`。
+    pub async fn log_work(
+        &self,
+        actor: &CurrentUser,
+        item_id: crate::domain::WorkItemId,
+        minutes: i64,
+        note: &str,
+        spent_on: Option<chrono::NaiveDate>,
+    ) -> Result<crate::domain::Worklog, AppError> {
+        if minutes <= 0 || minutes > 24 * 60 {
+            return Err(AppError::invalid(DOMAIN_CODE, "单条工时须在 1 分钟 ~ 24 小时之间"));
+        }
+        let item = self
+            .items
+            .find_by_id(item_id)
+            .await?
+            .ok_or_else(|| AppError::not_found(DOMAIN_CODE, "工作项不存在"))?;
+        self.ensure(actor, Action::Write, item.project_id).await?;
+        let log = self
+            .worklogs
+            .add(&crate::domain::NewWorklog {
+                work_item_id: item_id,
+                author_id: Some(actor.id),
+                minutes,
+                note: note.trim().to_owned(),
+                spent_on,
+            })
+            .await?;
+        let _ = self
+            .events
+            .publish(vec![
+                EventEnvelope::new(
+                    "workitem.worklogged",
+                    json!({
+                        "id": item.id.as_uuid(),
+                        "project_id": item.project_id.as_uuid(),
+                        "number": item.item_number,
+                        "minutes": minutes,
+                        "author": actor.id.as_uuid(),
+                    }),
+                )
+                .with_actor(actor.id.as_uuid().to_string()),
+            ])
+            .await;
+        Ok(log)
+    }
+
+    /// 工时明细(日期倒序)。
+    ///
+    /// # Errors
+    /// 工作项不存在 `PM-404`;无读权限 `PM-403`。
+    pub async fn list_worklogs(
+        &self,
+        actor: &CurrentUser,
+        item_id: crate::domain::WorkItemId,
+    ) -> Result<Vec<crate::domain::Worklog>, AppError> {
+        self.item_by_id(actor, item_id).await?;
+        self.worklogs.list_by_item(item_id).await
+    }
+
+    /// 工时汇总(累计 / 预估 / 按人)。
+    ///
+    /// # Errors
+    /// 工作项不存在 `PM-404`;无读权限 `PM-403`。
+    pub async fn worklog_summary(
+        &self,
+        actor: &CurrentUser,
+        item_id: crate::domain::WorkItemId,
+    ) -> Result<crate::domain::WorklogSummary, AppError> {
+        let item = self.item_by_id(actor, item_id).await?;
+        let estimate = item
+            .custom_fields
+            .get("estimate_minutes")
+            .and_then(serde_json::Value::as_i64);
+        let logs = self.worklogs.list_by_item(item_id).await?;
+        Ok(crate::domain::summarize_worklogs(&logs, estimate))
+    }
+
+    /// 删除工时(登记者本人或项目写权限)。
+    ///
+    /// # Errors
+    /// 记录不存在 `PM-404`;非本人且无写权限 `PM-403`。
+    pub async fn delete_worklog(
+        &self,
+        actor: &CurrentUser,
+        worklog_id: crate::domain::WorklogId,
+    ) -> Result<(), AppError> {
+        let log = self
+            .worklogs
+            .find_by_id(worklog_id)
+            .await?
+            .ok_or_else(|| AppError::not_found(DOMAIN_CODE, "工时记录不存在"))?;
+        if log.author_id != Some(actor.id) {
+            let item = self
+                .items
+                .find_by_id(log.work_item_id)
+                .await?
+                .ok_or_else(|| AppError::not_found(DOMAIN_CODE, "工作项不存在"))?;
+            self.ensure(actor, Action::Write, item.project_id).await?;
+        }
+        self.worklogs.delete(worklog_id).await?;
+        Ok(())
     }
 
     async fn ensure(

@@ -6,3 +6,20 @@ license.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+tantivy = "0.26.2"
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+sqlx.workspace = true
+uuid.workspace = true
+async-nats.workspace = true
+futures-util.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "process"] }
+axum.workspace = true
+codeplan-common = { workspace = true, features = ["axum"] }
+codeplan-kernel.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }

@@ -52,6 +52,8 @@ pub struct SshDeps {
     pub authz: Arc<dyn Authz>,
     /// 裸仓库路径。
     pub bare: Arc<dyn BareRepoStore>,
+    /// LFS over SSH 端点配置(None = LFS 未启用)。
+    pub lfs: Option<crate::lfs::EndpointConfig>,
 }
 
 /// SSH 服务配置。
@@ -148,6 +150,65 @@ impl SshHandler {
     fn repo_path(&self, full_name: &str) -> std::path::PathBuf {
         self.deps.bare.repo_path(full_name)
     }
+
+    /// `git-lfs-authenticate '<owner/key.git>' <upload|download>`:校验权限后
+    /// 频发带短时令牌的 LFS 端点 JSON,随后以 exit 0 关闭通道。
+    async fn handle_lfs_authenticate(
+        &mut self,
+        command: &str,
+        channel: ChannelId,
+        session: &mut russh::server::Session,
+    ) -> Result<(), SshError> {
+        let Some((uid, _uname)) = self.user.clone() else {
+            let _ = session.channel_failure(channel);
+            return Ok(());
+        };
+        let Some(lfs) = self.deps.lfs.clone() else {
+            let _ = session.channel_failure(channel);
+            return Ok(());
+        };
+        let mut args = command.split_whitespace();
+        let _ = args.next();
+        let Some(path_tok) = args.next() else {
+            let _ = session.channel_failure(channel);
+            return Ok(());
+        };
+        let Some(op) = args.next() else {
+            let _ = session.channel_failure(channel);
+            return Ok(());
+        };
+        if op != "upload" && op != "download" {
+            let _ = session.channel_failure(channel);
+            return Ok(());
+        }
+        let Some(full_name) = self.full_name_from_command_path(path_tok) else {
+            let _ = session.channel_failure(channel);
+            return Ok(());
+        };
+        let repo = self
+            .deps
+            .repos
+            .find_by_full_name(&full_name)
+            .await
+            .map_err(SshError::from)?
+            .ok_or_else(|| SshError(AppError::not_found(DOMAIN_CODE, "仓库不存在")))?;
+        if repo.archived {
+            let _ = session.channel_failure(channel);
+            return Ok(());
+        }
+        let action = if op == "upload" {
+            Action::Write
+        } else {
+            Action::Read
+        };
+        self.ensure(&uid, action, &repo).await?;
+
+        let body = crate::lfs::authenticate_json(&lfs, &uid.to_string(), &full_name, op);
+        let _ = session.data(channel, body.to_string().into_bytes());
+        let _ = session.exit_status_request(channel, 0);
+        let _ = session.close(channel);
+        Ok(())
+    }
 }
 
 impl russh::server::Handler for SshHandler {
@@ -202,6 +263,13 @@ impl russh::server::Handler for SshHandler {
         };
         let command = String::from_utf8_lossy(command).to_string();
         eprintln!("[ssh] exec: {command}");
+        // LFS over SSH(T-202):git-lfs-authenticate '<path>' <upload|download>
+        // → 返回带短时令牌的 LFS 端点 JSON,后续对象传输走 HTTP
+        if command.trim_start().starts_with("git-lfs-authenticate") {
+            return self
+                .handle_lfs_authenticate(&command, channel, session)
+                .await;
+        }
         let (service, path_raw) = command.split_once(' ').unwrap_or(("", ""));
         let service = service.trim();
         let Some(full_name) = self.full_name_from_command_path(path_raw) else {
@@ -263,14 +331,9 @@ impl russh::server::Handler for SshHandler {
                 let mut buf = vec![0u8; 16 * 1024];
                 loop {
                     match stdout.read(&mut buf).await {
-                        Ok(0) | Err(_) => {
-                            eprintln!("[ssh] stdout EOF(channel {channel:?})");
-                            break;
-                        }
+                        Ok(0) | Err(_) => break,
                         Ok(n) => {
-                            eprintln!("[ssh] 转发 {n} 字节");
                             if handle.data(channel, buf[..n].to_vec()).await.is_err() {
-                                eprintln!("[ssh] data 写回失败(channel {channel:?})");
                                 break;
                             }
                         }
@@ -309,12 +372,12 @@ impl russh::server::Handler for SshHandler {
             });
         }
 
-        // 子进程退出 watcher:exit 后发送 eof 并关闭通道
+        // 子进程退出 watcher:回传 exit-status 并关闭通道,让客户端拿到正确退出码
         let ssh_handle = session.handle();
         tokio::spawn(async move {
-            let status = child.wait().await;
-            eprintln!("[ssh] 子进程退出({status:?})");
-            let _ = ssh_handle.eof(channel).await;
+            let code = child.wait().await.ok().and_then(|s| s.code()).unwrap_or(1);
+            eprintln!("[ssh] 子进程退出(code {code})");
+            let _ = ssh_handle.exit_status_request(channel, code as u32).await;
             let _ = ssh_handle.close(channel).await;
         });
         Ok(())
@@ -337,6 +400,7 @@ impl russh::server::Handler for SshHandler {
         channel: ChannelId,
         _session: &mut russh::server::Session,
     ) -> Result<(), Self::Error> {
+        // 客户端半关闭:请求已发完,关闭 git stdin 让其产出结果
         self.senders.remove(&channel);
         Ok(())
     }

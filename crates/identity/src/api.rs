@@ -1,6 +1,6 @@
 //! HTTP 层:认证路由、当前用户提取器、OpenAPI 片段。
 
-use axum::extract::{FromRequestParts, State};
+use axum::extract::{FromRequestParts, Path, State};
 use axum::http::request::Parts;
 use axum::{Json, Router};
 use codeplan_common::error::AppError;
@@ -32,6 +32,12 @@ pub struct AuthState {
     pub users: Arc<dyn crate::domain::UserRepository>,
     /// SSH 公钥仓储。
     pub ssh_keys: Arc<dyn crate::domain::SshKeyRepository>,
+    /// PAT 存储(T-210;未装配则令牌端点 501)。
+    pub pats: Option<Arc<dyn crate::pat::PatStore>>,
+    /// GPG 公钥仓储(T-210)。
+    pub gpg_keys: Option<Arc<dyn crate::gpg::GpgKeyRepository>>,
+    /// 组织架构仓储(ORG-01:组织/团队/成员)。
+    pub orgs: Arc<dyn crate::domain::OrgRepository>,
 }
 
 /// 身份域路由(挂载到 `/api`)。
@@ -63,6 +69,32 @@ pub fn routes() -> Router<AuthState> {
         .route(
             "/api/dashboard/counts",
             axum::routing::get(dashboard_counts),
+        )
+        .route(
+            "/api/auth/tokens",
+            axum::routing::post(create_token).get(list_tokens),
+        )
+        .route("/api/auth/tokens/{id}", axum::routing::delete(revoke_token))
+        .route(
+            "/api/keys/gpg",
+            axum::routing::post(upload_gpg_key).get(list_gpg_keys),
+        )
+        .route("/api/keys/gpg/{id}", axum::routing::delete(delete_gpg_key))
+        .route(
+            "/api/admin/orgs",
+            axum::routing::get(list_orgs).post(create_org),
+        )
+        .route(
+            "/api/admin/orgs/{id}/teams",
+            axum::routing::get(list_teams).post(create_team),
+        )
+        .route(
+            "/api/admin/teams/{id}/members",
+            axum::routing::get(list_team_members).post(add_team_member),
+        )
+        .route(
+            "/api/admin/teams/{id}/members/{user_id}",
+            axum::routing::delete(remove_team_member),
         )
 }
 
@@ -731,6 +763,486 @@ async fn delete_ssh_key(
     Ok(Json(ApiResponse {
         code: "OK".to_owned(),
         message: "已删除".to_owned(),
+        data: None,
+    }))
+}
+
+// ---------- PAT(T-210) ----------
+
+#[derive(Debug, Deserialize, ToSchema)]
+/// 签发 PAT 请求。
+pub struct CreateTokenRequest {
+    /// 令牌名称。
+    pub name: String,
+    /// scopes(api / repo:read / repo:write)。
+    #[serde(default = "default_scopes")]
+    pub scopes: Vec<String>,
+    /// 有效天数(缺省永不过期)。
+    pub expires_in_days: Option<i64>,
+}
+
+fn default_scopes() -> Vec<String> {
+    vec![
+        "api".to_owned(),
+        "repo:read".to_owned(),
+        "repo:write".to_owned(),
+    ]
+}
+
+/// 签发 PAT(明文仅此一次返回)。
+async fn create_token(
+    user: Result<CurrentUser, AppError>,
+    State(st): State<AuthState>,
+    Json(body): Json<CreateTokenRequest>,
+) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
+    let user = user?;
+    let Some(pats) = st.pats.as_ref() else {
+        return Err(AppError::internal(DOMAIN_CODE).with_details(serde_json::json!("PAT 未启用")));
+    };
+    if body.name.trim().is_empty() {
+        return Err(AppError::invalid(DOMAIN_CODE, "名称不能为空"));
+    }
+    if !crate::pat::scopes_valid(&body.scopes) {
+        return Err(AppError::invalid(
+            DOMAIN_CODE,
+            "scopes 非法(可选:api / repo:read / repo:write)",
+        ));
+    }
+    let token = crate::pat::generate_token();
+    let expires_at = body
+        .expires_in_days
+        .map(|d| chrono::Utc::now() + chrono::Duration::days(d));
+    let pat = pats
+        .create(&crate::pat::NewPat {
+            user_id: user.id,
+            name: body.name.trim().to_owned(),
+            token_hash: crate::pat::hash_token(&token),
+            prefix: token.get(..12).unwrap_or_default().to_owned(),
+            scopes: body.scopes.clone(),
+            expires_at,
+        })
+        .await?;
+    Ok(Json(ApiResponse::ok(serde_json::json!({
+        "id": pat.id.as_uuid(),
+        "name": pat.name,
+        "token": token,
+        "scopes": pat.scopes,
+        "expires_at": pat.expires_at.map(|e| e.to_rfc3339()),
+    }))))
+}
+
+async fn list_tokens(
+    user: Result<CurrentUser, AppError>,
+    State(st): State<AuthState>,
+) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
+    let user = user?;
+    let Some(pats) = st.pats.as_ref() else {
+        return Ok(Json(ApiResponse::ok(serde_json::json!([]))));
+    };
+    let pats = pats.list_by_user(user.id).await?;
+    Ok(Json(ApiResponse::ok(serde_json::json!(
+        pats.iter()
+            .map(|p| serde_json::json!({
+                "id": p.id.as_uuid(),
+                "name": p.name,
+                "prefix": p.prefix,
+                "scopes": p.scopes,
+                "last_used_at": p.last_used_at.map(|t| t.to_rfc3339()),
+                "revoked": p.revoked_at.is_some(),
+                "expires_at": p.expires_at.map(|t| t.to_rfc3339()),
+                "created_at": p.created_at.to_rfc3339(),
+            }))
+            .collect::<Vec<_>>()
+    ))))
+}
+
+async fn revoke_token(
+    user: Result<CurrentUser, AppError>,
+    State(st): State<AuthState>,
+    Path(id): Path<String>,
+) -> Result<Json<ApiResponse<()>>, AppError> {
+    let user = user?;
+    let Some(pats) = st.pats.as_ref() else {
+        return Err(AppError::internal(DOMAIN_CODE).with_details(serde_json::json!("PAT 未启用")));
+    };
+    let Ok(id) = crate::pat::PatId::try_from(id.as_str()) else {
+        return Err(AppError::invalid(DOMAIN_CODE, "ID 非法"));
+    };
+    pats.revoke(id, user.id).await?;
+    Ok(Json(ApiResponse {
+        code: "OK".to_owned(),
+        message: "已吊销".to_owned(),
+        data: None,
+    }))
+}
+
+// ---------- GPG 公钥(T-210) ----------
+
+#[derive(Debug, Deserialize, ToSchema)]
+/// 上传 GPG 公钥请求。
+pub struct UploadGpgKeyRequest {
+    /// ASCII armor 公钥。
+    pub public_key: String,
+    /// 声明邮箱(展示用)。
+    #[serde(default)]
+    pub email: String,
+}
+
+async fn upload_gpg_key(
+    user: Result<CurrentUser, AppError>,
+    State(st): State<AuthState>,
+    Json(body): Json<UploadGpgKeyRequest>,
+) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
+    let user = user?;
+    let Some(keys) = st.gpg_keys.as_ref() else {
+        return Err(AppError::internal(DOMAIN_CODE).with_details(serde_json::json!("GPG 未启用")));
+    };
+    if !body.public_key.contains("BEGIN PGP PUBLIC KEY") {
+        return Err(AppError::invalid(DOMAIN_CODE, "需要 ASCII armor 公钥"));
+    }
+    // 存储标识 = armor 的 SHA-256(真指纹由验证侧 sequoia 解析)
+    let fingerprint = crate::pat::hash_token(body.public_key.trim());
+    let key = keys
+        .upload(&crate::gpg::NewGpgKey {
+            user_id: user.id,
+            fingerprint,
+            public_key: body.public_key.trim().to_owned(),
+            email: body.email.clone(),
+        })
+        .await?;
+    Ok(Json(ApiResponse::ok(serde_json::json!({
+        "id": key.id.as_uuid(),
+        "key_id": key.fingerprint,
+        "email": key.email,
+        "created_at": key.created_at.to_rfc3339(),
+    }))))
+}
+
+async fn list_gpg_keys(
+    user: Result<CurrentUser, AppError>,
+    State(st): State<AuthState>,
+) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
+    let user = user?;
+    let Some(keys) = st.gpg_keys.as_ref() else {
+        return Ok(Json(ApiResponse::ok(serde_json::json!([]))));
+    };
+    let list = keys.list_by_user(user.id).await?;
+    Ok(Json(ApiResponse::ok(serde_json::json!(
+        list.iter()
+            .map(|k| serde_json::json!({
+                "id": k.id.as_uuid(),
+                "key_id": k.fingerprint,
+                "email": k.email,
+                "created_at": k.created_at.to_rfc3339(),
+            }))
+            .collect::<Vec<_>>()
+    ))))
+}
+
+async fn delete_gpg_key(
+    user: Result<CurrentUser, AppError>,
+    State(st): State<AuthState>,
+    Path(id): Path<String>,
+) -> Result<Json<ApiResponse<()>>, AppError> {
+    let user = user?;
+    let Some(keys) = st.gpg_keys.as_ref() else {
+        return Err(AppError::internal(DOMAIN_CODE).with_details(serde_json::json!("GPG 未启用")));
+    };
+    let Ok(id) = crate::gpg::GpgKeyId::try_from(id.as_str()) else {
+        return Err(AppError::invalid(DOMAIN_CODE, "ID 非法"));
+    };
+    keys.delete(id, user.id).await?;
+    Ok(Json(ApiResponse {
+        code: "OK".to_owned(),
+        message: "已删除".to_owned(),
+        data: None,
+    }))
+}
+
+// ---------- 组织架构(ORG-01,T-135) ----------
+
+/// 平台管理员校验。
+fn require_admin(user: Result<CurrentUser, AppError>) -> Result<CurrentUser, AppError> {
+    let actor = user?;
+    if !actor.is_platform_admin {
+        return Err(AppError::forbidden(DOMAIN_CODE, "仅平台管理员"));
+    }
+    Ok(actor)
+}
+
+/// 组织响应。
+#[derive(Debug, Serialize, ToSchema)]
+pub struct OrgResponse {
+    /// 组织 ID。
+    pub id: String,
+    /// 组织名。
+    pub name: String,
+    /// 团队数。
+    pub team_count: usize,
+    /// 创建时间。
+    pub created_at: String,
+}
+
+/// 创建组织请求。
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct CreateOrgRequest {
+    /// 组织名(唯一)。
+    pub name: String,
+}
+
+/// 团队响应。
+#[derive(Debug, Serialize, ToSchema)]
+pub struct TeamResponse {
+    /// 团队 ID。
+    pub id: String,
+    /// 所属组织 ID。
+    pub org_id: String,
+    /// 团队名。
+    pub name: String,
+    /// 成员数。
+    pub member_count: usize,
+    /// 创建时间。
+    pub created_at: String,
+}
+
+/// 创建团队请求。
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct CreateTeamRequest {
+    /// 团队名(组织内唯一)。
+    pub name: String,
+}
+
+/// 团队成员响应。
+#[derive(Debug, Serialize, ToSchema)]
+pub struct TeamMemberResponse {
+    /// 用户 ID。
+    pub user_id: String,
+    /// 登录名(查不到时为空)。
+    pub username: String,
+    /// 显示名。
+    pub display_name: String,
+    /// 加入时间。
+    pub joined_at: String,
+}
+
+/// 添加团队成员请求(按登录名)。
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct AddTeamMemberRequest {
+    /// 用户登录名。
+    pub username: String,
+}
+
+fn org_id_of(raw: &str) -> Result<crate::domain::OrgId, AppError> {
+    uuid::Uuid::parse_str(raw)
+        .map(crate::domain::OrgId::from_uuid)
+        .map_err(|_| AppError::invalid(DOMAIN_CODE, "组织 ID 非法"))
+}
+
+fn team_id_of(raw: &str) -> Result<crate::domain::TeamId, AppError> {
+    uuid::Uuid::parse_str(raw)
+        .map(crate::domain::TeamId::from_uuid)
+        .map_err(|_| AppError::invalid(DOMAIN_CODE, "团队 ID 非法"))
+}
+
+/// 组织列表(含团队数)。
+#[utoipa::path(get, path = "/api/admin/orgs", responses((status = 200, body = OrgResponse)))]
+async fn list_orgs(
+    user: Result<CurrentUser, AppError>,
+    State(st): State<AuthState>,
+) -> Result<Json<ApiResponse<Vec<OrgResponse>>>, AppError> {
+    require_admin(user)?;
+    let orgs = st.orgs.list().await?;
+    let mut out = Vec::with_capacity(orgs.len());
+    for o in orgs {
+        let team_count = st.orgs.list_teams(o.id).await?.len();
+        out.push(OrgResponse {
+            id: o.id.as_uuid().to_string(),
+            name: o.name,
+            team_count,
+            created_at: o.created_at.to_rfc3339(),
+        });
+    }
+    Ok(Json(ApiResponse::ok(out)))
+}
+
+/// 创建组织。
+#[utoipa::path(
+    post,
+    path = "/api/admin/orgs",
+    request_body = CreateOrgRequest,
+    responses((status = 200, body = OrgResponse), (status = 409))
+)]
+async fn create_org(
+    user: Result<CurrentUser, AppError>,
+    State(st): State<AuthState>,
+    Json(req): Json<CreateOrgRequest>,
+) -> Result<Json<ApiResponse<OrgResponse>>, AppError> {
+    require_admin(user)?;
+    let name = req.name.trim();
+    if name.is_empty() {
+        return Err(AppError::invalid(DOMAIN_CODE, "组织名不能为空"));
+    }
+    let org = st.orgs.create(name).await?;
+    Ok(Json(ApiResponse::ok(OrgResponse {
+        id: org.id.as_uuid().to_string(),
+        name: org.name,
+        team_count: 0,
+        created_at: org.created_at.to_rfc3339(),
+    })))
+}
+
+/// 组织下的团队列表。
+#[utoipa::path(
+    get,
+    path = "/api/admin/orgs/{id}/teams",
+    params(("id" = String, Path, description = "组织 ID")),
+    responses((status = 200, body = TeamResponse), (status = 404))
+)]
+async fn list_teams(
+    user: Result<CurrentUser, AppError>,
+    State(st): State<AuthState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<Json<ApiResponse<Vec<TeamResponse>>>, AppError> {
+    require_admin(user)?;
+    let org_id = org_id_of(&id)?;
+    if st.orgs.find(org_id).await?.is_none() {
+        return Err(AppError::not_found(DOMAIN_CODE, "组织不存在"));
+    }
+    let teams = st.orgs.list_teams(org_id).await?;
+    let mut out = Vec::with_capacity(teams.len());
+    for t in teams {
+        let member_count = st.orgs.list_members(t.id).await?.len();
+        out.push(TeamResponse {
+            id: t.id.as_uuid().to_string(),
+            org_id: t.org_id.as_uuid().to_string(),
+            name: t.name,
+            member_count,
+            created_at: t.created_at.to_rfc3339(),
+        });
+    }
+    Ok(Json(ApiResponse::ok(out)))
+}
+
+/// 创建团队。
+#[utoipa::path(
+    post,
+    path = "/api/admin/orgs/{id}/teams",
+    request_body = CreateTeamRequest,
+    params(("id" = String, Path)),
+    responses((status = 200, body = TeamResponse), (status = 404), (status = 409))
+)]
+async fn create_team(
+    user: Result<CurrentUser, AppError>,
+    State(st): State<AuthState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(req): Json<CreateTeamRequest>,
+) -> Result<Json<ApiResponse<TeamResponse>>, AppError> {
+    require_admin(user)?;
+    let org_id = org_id_of(&id)?;
+    if st.orgs.find(org_id).await?.is_none() {
+        return Err(AppError::not_found(DOMAIN_CODE, "组织不存在"));
+    }
+    let name = req.name.trim();
+    if name.is_empty() {
+        return Err(AppError::invalid(DOMAIN_CODE, "团队名不能为空"));
+    }
+    let team = st.orgs.create_team(org_id, name).await?;
+    Ok(Json(ApiResponse::ok(TeamResponse {
+        id: team.id.as_uuid().to_string(),
+        org_id: team.org_id.as_uuid().to_string(),
+        name: team.name,
+        member_count: 0,
+        created_at: team.created_at.to_rfc3339(),
+    })))
+}
+
+/// 团队成员列表(附登录名/显示名)。
+#[utoipa::path(
+    get,
+    path = "/api/admin/teams/{id}/members",
+    params(("id" = String, Path, description = "团队 ID")),
+    responses((status = 200, body = TeamMemberResponse), (status = 404))
+)]
+async fn list_team_members(
+    user: Result<CurrentUser, AppError>,
+    State(st): State<AuthState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<Json<ApiResponse<Vec<TeamMemberResponse>>>, AppError> {
+    require_admin(user)?;
+    let team_id = team_id_of(&id)?;
+    if st.orgs.find_team(team_id).await?.is_none() {
+        return Err(AppError::not_found(DOMAIN_CODE, "团队不存在"));
+    }
+    let members = st.orgs.list_members(team_id).await?;
+    let mut out = Vec::with_capacity(members.len());
+    for m in members {
+        let u = st.users.find_by_id(m.user_id).await?;
+        out.push(TeamMemberResponse {
+            user_id: m.user_id.as_uuid().to_string(),
+            username: u.as_ref().map(|x| x.username.clone()).unwrap_or_default(),
+            display_name: u.as_ref().map(|x| x.display_name.clone()).unwrap_or_default(),
+            joined_at: m.joined_at.to_rfc3339(),
+        });
+    }
+    Ok(Json(ApiResponse::ok(out)))
+}
+
+/// 添加团队成员(按登录名;用户不存在 → 404)。
+#[utoipa::path(
+    post,
+    path = "/api/admin/teams/{id}/members",
+    request_body = AddTeamMemberRequest,
+    params(("id" = String, Path)),
+    responses((status = 200), (status = 404))
+)]
+async fn add_team_member(
+    user: Result<CurrentUser, AppError>,
+    State(st): State<AuthState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(req): Json<AddTeamMemberRequest>,
+) -> Result<Json<ApiResponse<()>>, AppError> {
+    require_admin(user)?;
+    let team_id = team_id_of(&id)?;
+    if st.orgs.find_team(team_id).await?.is_none() {
+        return Err(AppError::not_found(DOMAIN_CODE, "团队不存在"));
+    }
+    let target = st
+        .users
+        .find_by_username(req.username.trim())
+        .await?
+        .ok_or_else(|| AppError::not_found(DOMAIN_CODE, "用户不存在"))?;
+    st.orgs.add_member(team_id, target.id).await?;
+    Ok(Json(ApiResponse {
+        code: "OK".to_owned(),
+        message: "已加入团队".to_owned(),
+        data: None,
+    }))
+}
+
+/// 移出团队成员。
+#[utoipa::path(
+    delete,
+    path = "/api/admin/teams/{id}/members/{user_id}",
+    params(("id" = String, Path), ("user_id" = String, Path)),
+    responses((status = 200), (status = 404))
+)]
+async fn remove_team_member(
+    user: Result<CurrentUser, AppError>,
+    State(st): State<AuthState>,
+    axum::extract::Path((id, user_id)): axum::extract::Path<(String, String)>,
+) -> Result<Json<ApiResponse<()>>, AppError> {
+    require_admin(user)?;
+    let team_id = team_id_of(&id)?;
+    let uid = uuid::Uuid::parse_str(&user_id)
+        .map(codeplan_kernel::ids::UserId::from_uuid)
+        .map_err(|_| AppError::invalid(DOMAIN_CODE, "用户 ID 非法"))?;
+    let removed = st.orgs.remove_member(team_id, uid).await?;
+    if !removed {
+        return Err(AppError::not_found(DOMAIN_CODE, "成员不在该团队"));
+    }
+    Ok(Json(ApiResponse {
+        code: "OK".to_owned(),
+        message: "已移出团队".to_owned(),
         data: None,
     }))
 }

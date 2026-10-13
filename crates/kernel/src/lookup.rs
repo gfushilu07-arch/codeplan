@@ -21,4 +21,10 @@ pub trait IdentityLookup: Send + Sync {
     /// # Errors
     /// 查询自身故障时返回错误。
     async fn user_brief(&self, id: UserId) -> Result<Option<UserBrief>, String>;
+
+    /// 按登录名查用户简要信息(CODEOWNERS 自动指派等);不存在返回 `Ok(None)`。
+    ///
+    /// # Errors
+    /// 查询自身故障时返回错误。
+    async fn by_username(&self, username: &str) -> Result<Option<UserBrief>, String>;
 }

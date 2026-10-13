@@ -6,3 +6,10 @@ license.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+opendal = { version = "0.59.4", features = ["services-fs"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }
+uuid = { workspace = true, features = ["v4"] }

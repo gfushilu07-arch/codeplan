@@ -81,6 +81,7 @@ pub struct AuthService {
     decoding_key: DecodingKey,
     directory: Option<std::sync::Arc<dyn LdapDirectory>>,
     audit: Option<std::sync::Arc<dyn AuditSink>>,
+    pats: Option<std::sync::Arc<dyn crate::pat::PatStore>>,
 }
 
 impl AuthService {
@@ -93,7 +94,15 @@ impl AuthService {
             decoding_key: DecodingKey::from_secret(jwt_secret.as_bytes()),
             directory: None,
             audit: None,
+            pats: None,
         }
+    }
+
+    /// 装配 PAT 存储(启用个人访问令牌,T-210)。
+    #[must_use]
+    pub fn with_pat_store(mut self, pats: std::sync::Arc<dyn crate::pat::PatStore>) -> Self {
+        self.pats = Some(pats);
+        self
     }
 
     /// 挂载 LDAP 目录(启用登录回退与定时同步)。
@@ -397,11 +406,50 @@ impl AuthService {
             .map(|d| d.claims)
     }
 
+    /// 校验个人访问令牌(T-210):哈希匹配 + 未吊销未过期 → CurrentUser(scopes)。
+    async fn verify_pat(&self, token: &str) -> Result<CurrentUser, AppError> {
+        let Some(pats) = self.pats.as_ref() else {
+            return Err(AppError::new(format!("{DOMAIN_CODE}-401"), 401, "令牌无效"));
+        };
+        let hash = crate::pat::hash_token(token);
+        let pat = pats
+            .find_by_hash(&hash)
+            .await?
+            .ok_or_else(|| AppError::new(format!("{DOMAIN_CODE}-401"), 401, "令牌无效"))?;
+        if !crate::pat::accept(&pat, chrono::Utc::now()) {
+            return Err(AppError::new(
+                format!("{DOMAIN_CODE}-401"),
+                401,
+                "令牌已吊销或过期",
+            ));
+        }
+        let user =
+            self.users.find_by_id(pat.user_id).await?.ok_or_else(|| {
+                AppError::new(format!("{DOMAIN_CODE}-401"), 401, "会话无效或已过期")
+            })?;
+        if user.status == crate::domain::UserStatus::Disabled {
+            return Err(AppError::forbidden(DOMAIN_CODE, "账号已禁用"));
+        }
+        pats.touch(pat.id).await;
+        let mut current = CurrentUser::new(user.id, user.display_name, user.email);
+        current.scopes = pat.scopes.clone();
+        Ok(if user.is_platform_admin {
+            current.as_platform_admin()
+        } else {
+            current
+        })
+    }
+
     /// 校验 JWT 并还原当前用户上下文。
     ///
     /// # Errors
     /// 令牌无效/过期返回 `ORG-401`;用户已被删除或禁用返回 `ORG-401`。
     pub async fn verify_token(&self, token: &str) -> Result<CurrentUser, AppError> {
+        if let Some(rest) = token.strip_prefix(crate::pat::TOKEN_PREFIX) {
+            return self
+                .verify_pat(&format!("{}{rest}", crate::pat::TOKEN_PREFIX))
+                .await;
+        }
         let data =
             jsonwebtoken::decode::<Claims>(token, &self.decoding_key, &Validation::default())
                 .map_err(|_| {

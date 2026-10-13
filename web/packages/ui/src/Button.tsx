@@ -1,41 +1,30 @@
-import type { CSSProperties, ButtonHTMLAttributes } from "react";
+import type { ButtonHTMLAttributes } from "react";
 
-export type ButtonVariant = "primary" | "secondary" | "danger";
+export type ButtonVariant = "primary" | "secondary" | "danger" | "ghost";
+export type ButtonSize = "sm" | "md" | "lg";
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: ButtonVariant;
+  size?: ButtonSize;
 }
 
-const variantStyles: Record<ButtonVariant, CSSProperties> = {
-  primary: {
-    background: "var(--cp-color-primary)",
-    color: "var(--cp-color-primary-fg)",
-  },
-  secondary: {
-    background: "var(--cp-color-surface-alt)",
-    color: "var(--cp-color-text)",
-  },
-  danger: {
-    background: "var(--cp-color-danger)",
-    color: "var(--cp-color-primary-fg)",
-  },
+const VARIANT_CLASS: Record<ButtonVariant, string> = {
+  primary: "cp-btn-primary",
+  secondary: "",
+  danger: "danger",
+  ghost: "ghost",
 };
 
-/** 基础按钮(样式值全部来自 design-tokens,规范见 ARCHITECTURE.md §2.3)。 */
-export function Button({ variant = "primary", style, ...rest }: ButtonProps) {
-  return (
-    <button
-      {...rest}
-      style={{
-        border: "1px solid transparent",
-        borderRadius: "var(--cp-radius-md)",
-        padding: "var(--cp-space-2) var(--cp-space-3)",
-        font: "inherit",
-        cursor: "pointer",
-        boxShadow: "var(--cp-shadow-1)",
-        ...variantStyles[variant],
-        ...style,
-      }}
-    />
-  );
+const SIZE_CLASS: Record<ButtonSize, string> = {
+  sm: "cp-btn-sm",
+  md: "",
+  lg: "cp-btn-lg",
+};
+
+/** 基础按钮:视觉全部来自全局 .cp-btn 组件类(见 web/apps/main/src/global.css)。 */
+export function Button({ variant = "primary", size = "md", className, ...rest }: ButtonProps) {
+  const cls = ["cp-btn", VARIANT_CLASS[variant], SIZE_CLASS[size], className]
+    .filter(Boolean)
+    .join(" ");
+  return <button {...rest} className={cls} />;
 }

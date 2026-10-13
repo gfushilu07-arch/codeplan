@@ -13,6 +13,16 @@ pub struct CurrentUser {
     pub email: String,
     /// 是否平台管理员。
     pub is_platform_admin: bool,
+    /// 凭证 scopes(JWT 会话 = `["*"]` 全权;PAT = 细粒度,T-210)。
+    pub scopes: Vec<String>,
+}
+
+impl CurrentUser {
+    /// 是否持有指定 scope(通配 `*` 全权)。
+    #[must_use]
+    pub fn has_scope(&self, scope: &str) -> bool {
+        self.scopes.iter().any(|s| s == "*" || s == scope)
+    }
 }
 
 impl CurrentUser {
@@ -24,6 +34,7 @@ impl CurrentUser {
             display_name: display_name.into(),
             email: email.into(),
             is_platform_admin: false,
+            scopes: vec!["*".to_owned()],
         }
     }
 

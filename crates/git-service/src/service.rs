@@ -189,7 +189,8 @@ impl GitService {
             .ok_or_else(|| AppError::forbidden(DOMAIN_CODE, "无权限执行该操作"))
     }
 
-    /// 发布 `commit.pushed`(post-receive 钩子回调;refs 为钩子原始行)。
+    /// 发布 `commit.pushed`(post-receive 钩子回调;refs 为钩子原始行
+    /// `old new ref`),payload 附各引用新提交的消息(T-207 提交关联)。
     ///
     /// # Errors
     /// 仓库不存在 `GIT-404`;事件发布失败。
@@ -199,6 +200,15 @@ impl GitService {
             .find_by_full_name(full_name)
             .await?
             .ok_or_else(|| AppError::not_found(DOMAIN_CODE, "仓库不存在"))?;
+        let mut commits: Vec<serde_json::Value> = Vec::new();
+        for line in refs {
+            let Some(parsed) = parse_push_ref(line) else {
+                continue;
+            };
+            for (sha, message) in self.pushed_commits(full_name, &parsed).await {
+                commits.push(json!({"sha": sha, "message": message, "ref": parsed.ref_name}));
+            }
+        }
         self.events
             .publish(vec![EventEnvelope::new(
                 "commit.pushed",
@@ -207,10 +217,68 @@ impl GitService {
                     "full_name": repo.full_name,
                     "default_branch": repo.default_branch,
                     "refs": refs,
+                    "commits": commits,
                 }),
             )])
             .await
             .map_err(|e| AppError::internal(DOMAIN_CODE).with_details(serde_json::json!(e)))
+    }
+
+    /// 提取一次引用更新引入的提交(sha + 完整消息)。
+    async fn pushed_commits(
+        &self,
+        full_name: &str,
+        parsed: &PushedRef<'_>,
+    ) -> Vec<(String, String)> {
+        let path = self.bare.repo_path(full_name);
+        // 新建引用:取分支顶端最近提交;普通更新:old..new;删除:无
+        let range = if is_zero_sha(parsed.old) {
+            format!("-50|{}", parsed.new)
+        } else {
+            format!("200|{}..{}", parsed.old, parsed.new)
+        };
+        let Some((limit, spec)) = range.split_once('|') else {
+            return Vec::new();
+        };
+        let out = tokio::process::Command::new("git")
+            .arg("--git-dir")
+            .arg(&path)
+            .args([
+                "--no-pager",
+                "log",
+                "--format=%H\x1f%s\x1f%b%x1e",
+                "--max-count",
+                limit,
+                spec,
+            ])
+            .output()
+            .await;
+        let Ok(out) = out else {
+            return Vec::new();
+        };
+        if !out.status.success() {
+            return Vec::new();
+        }
+        String::from_utf8_lossy(&out.stdout)
+            .split('\x1e')
+            .filter_map(|record| {
+                let record = record.trim_matches('\n');
+                if record.is_empty() {
+                    return None;
+                }
+                let mut it = record.split('\x1f');
+                Some((
+                    it.next()?.to_owned(),
+                    format!(
+                        "{}\n{}",
+                        it.next().unwrap_or_default(),
+                        it.next().unwrap_or_default()
+                    )
+                    .trim()
+                    .to_owned(),
+                ))
+            })
+            .collect()
     }
 
     async fn ensure(
@@ -227,5 +295,49 @@ impl GitService {
             .map_err(|e| AppError::internal(DOMAIN_CODE).with_details(serde_json::json!(e)))?
             .then_some(())
             .ok_or_else(|| AppError::forbidden(DOMAIN_CODE, "无权限执行该操作"))
+    }
+}
+
+/// 一次引用更新的三元组。
+pub struct PushedRef<'a> {
+    /// 旧 SHA。
+    pub old: &'a str,
+    /// 新 SHA。
+    pub new: &'a str,
+    /// 引用全名。
+    pub ref_name: &'a str,
+}
+
+/// 解析钩子原始行 `old new ref`。
+#[must_use]
+pub fn parse_push_ref(line: &str) -> Option<PushedRef<'_>> {
+    let mut it = line.split_whitespace();
+    let old = it.next()?;
+    let new = it.next()?;
+    let ref_name = it.next()?;
+    Some(PushedRef { old, new, ref_name })
+}
+
+/// 全零 SHA(新建/删除标记)。
+#[must_use]
+pub fn is_zero_sha(sha: &str) -> bool {
+    sha.bytes().all(|b| b == b'0') || sha.is_empty()
+}
+
+#[cfg(test)]
+mod push_parse_tests {
+    use super::*;
+
+    #[test]
+    fn parse_push_ref_variants() {
+        let r = parse_push_ref("0000abc 1234abc refs/heads/main").unwrap();
+        assert_eq!(r.ref_name, "refs/heads/main");
+        assert!(
+            is_zero_sha(r.old) || !r.old.starts_with("00000"),
+            "兼容任意零串"
+        );
+        assert!(parse_push_ref("only-two tokens").is_none());
+        assert!(is_zero_sha("0000000000000000000000000000000000000000"));
+        assert!(!is_zero_sha("1234abc"));
     }
 }

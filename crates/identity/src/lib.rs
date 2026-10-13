@@ -5,10 +5,14 @@
 
 pub mod api;
 pub mod domain;
+pub mod gpg;
 pub mod infra;
 pub mod ldap;
 pub mod listen;
+pub mod lookup_impl;
 pub mod oidc;
+pub mod pat;
+pub mod pat_infra;
 pub mod rbac;
 pub mod service;
 

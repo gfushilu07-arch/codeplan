@@ -9,6 +9,7 @@ name = "codeplan-server"
 path = "src/main.rs"
 
 [dependencies]
+async-trait.workspace = true
 axum.workspace = true
 codeplan-eventbus.workspace = true
 codeplan-git-service.workspace = true
@@ -19,12 +20,31 @@ codeplan-ext.workspace = true
 codeplan-notify.workspace = true
 codeplan-identity.workspace = true
 codeplan-wiki.workspace = true
+codeplan-common = { workspace = true, features = ["axum"] }
 codeplan-kernel.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
 tokio.workspace = true
 utoipa.workspace = true
+async-nats.workspace = true
+uuid.workspace = true
+futures-util.workspace = true
+codeplan-storage = { version = "0.1.0", path = "../storage" }
+codeplan-code-review = { version = "0.1.0", path = "../code-review" }
+codeplan-insights = { version = "0.1.0", path = "../insights" }
+codeplan-search = { version = "0.1.0", path = "../search" }
+codeplan-ci = { version = "0.1.0", path = "../ci" }
+codeplan-appcenter = { version = "0.1.0", path = "../appcenter" }
+codeplan-plugin-cert-acme = { version = "0.1.0", path = "../../plugins/cert-acme" }
+prost = "0.14"
+tokio-stream = { version = "0.1", features = ["net"] }
+tonic = "0.14"
+tonic-prost = "0.14"
+
+
+[build-dependencies]
+tonic-prost-build = "0.14"
 
 [lints]
 workspace = true

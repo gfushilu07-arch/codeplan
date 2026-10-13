@@ -120,3 +120,54 @@ pub async fn spawn_repo_created_grant(
     });
     Ok(())
 }
+
+/// 订阅 `codeplan.events.app.created`,给创建者授予应用 admin 角色(T-310)。
+/// 消费幂等:角色授予为 upsert。
+///
+/// # Errors
+/// 仅在 NATS 订阅建立失败时返回。
+pub async fn spawn_app_created_grant(
+    nats_url: &str,
+    rbac: Arc<RbacService>,
+) -> Result<(), String> {
+    let client = async_nats::connect(nats_url)
+        .await
+        .map_err(|e| format!("NATS 连接失败({nats_url}): {e}"))?;
+    let mut sub = client
+        .subscribe("codeplan.events.app.created")
+        .await
+        .map_err(|e| e.to_string())?;
+    println!("identity:已订阅 app.created(自动授予创建者 app admin)");
+    tokio::spawn(async move {
+        while let Some(msg) = sub.next().await {
+            let Ok(envelope) = serde_json::from_slice::<serde_json::Value>(&msg.payload) else {
+                eprintln!("app.created 载荷解析失败");
+                continue;
+            };
+            let field = |key: &str| -> Option<String> {
+                envelope
+                    .get("payload")
+                    .and_then(|p| p.get(key))
+                    .or_else(|| envelope.get(key))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_owned)
+            };
+            let Some(app_id) = field("app_id").and_then(|s| uuid::Uuid::parse_str(&s).ok()) else {
+                eprintln!("app.created 缺少 app_id");
+                continue;
+            };
+            let Some(owner) = field("owner").and_then(|s| uuid::Uuid::parse_str(&s).ok()) else {
+                eprintln!("app.created 缺少 owner");
+                continue;
+            };
+            if let Err(e) = rbac
+                .store
+                .grant(UserId::from_uuid(owner), "app", app_id, ResourceRole::Admin)
+                .await
+            {
+                eprintln!("app.created 授权失败: {}", e.message());
+            }
+        }
+    });
+    Ok(())
+}

@@ -185,6 +185,23 @@ const ITEM_COLS: &str = "id, project_id, item_number, item_type, title, descript
 
 #[async_trait]
 impl WorkItemRepository for PgWorkItemRepository {
+    async fn find_by_number(
+        &self,
+        project_id: ProjectId,
+        item_number: i64,
+    ) -> Result<Option<WorkItem>, AppError> {
+        let sql = format!(
+            "SELECT {ITEM_COLS} FROM proj_work_item WHERE project_id = $1 AND item_number = $2"
+        );
+        let row = sqlx::query_as::<_, ItemRow>(&sql)
+            .bind(project_id.as_uuid())
+            .bind(item_number)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(pm_internal)?;
+        row.map(WorkItem::try_from).transpose()
+    }
+
     async fn create(
         &self,
         project_id: ProjectId,
@@ -723,5 +740,315 @@ impl crate::domain::MilestoneRepository for PgMilestoneRepository {
         .await
         .map_err(pm_internal)?;
         Ok(crate::domain::MilestoneProgress { total, done })
+    }
+}
+
+/// 提交链接 PG 实现(T-207)。
+pub struct PgCommitLinkStore {
+    pool: PgPool,
+}
+
+impl PgCommitLinkStore {
+    /// 构造。
+    #[must_use]
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::domain::CommitLinkRepository for PgCommitLinkStore {
+    async fn link(&self, link: &crate::domain::NewCommitLink) -> Result<(), AppError> {
+        sqlx::query(
+            "INSERT INTO proj_work_item_commit
+             (id, work_item_id, repo_id, full_name, commit_sha, subject, ref_name)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             ON CONFLICT (work_item_id, commit_sha, ref_name) DO NOTHING",
+        )
+        .bind(uuid::Uuid::new_v4())
+        .bind(link.work_item_id.as_uuid())
+        .bind(link.repo_id)
+        .bind(&link.full_name)
+        .bind(&link.commit_sha)
+        .bind(&link.subject)
+        .bind(&link.ref_name)
+        .execute(&self.pool)
+        .await
+        .map_err(pm_internal)?;
+        Ok(())
+    }
+
+    async fn list_by_item(
+        &self,
+        work_item_id: crate::domain::WorkItemId,
+    ) -> Result<Vec<crate::domain::WorkItemCommit>, AppError> {
+        let rows = sqlx::query_as::<
+            _,
+            (
+                uuid::Uuid,
+                uuid::Uuid,
+                uuid::Uuid,
+                String,
+                String,
+                String,
+                String,
+                Option<chrono::DateTime<chrono::Utc>>,
+                chrono::DateTime<chrono::Utc>,
+            ),
+        >(
+            "SELECT id, work_item_id, repo_id, full_name, commit_sha, subject, ref_name, \
+                    committed_at, created_at
+             FROM proj_work_item_commit WHERE work_item_id = $1
+             ORDER BY created_at DESC",
+        )
+        .bind(work_item_id.as_uuid())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(pm_internal)?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    id,
+                    work_item_id,
+                    repo_id,
+                    full_name,
+                    commit_sha,
+                    subject,
+                    ref_name,
+                    committed_at,
+                    created_at,
+                )| {
+                    crate::domain::WorkItemCommit {
+                        id: crate::domain::CommitLinkId::from_uuid(id),
+                        work_item_id: crate::domain::WorkItemId::from_uuid(work_item_id),
+                        repo_id,
+                        full_name,
+                        commit_sha,
+                        subject,
+                        ref_name,
+                        committed_at,
+                        created_at,
+                    }
+                },
+            )
+            .collect())
+    }
+}
+
+/// 工作项评论 PG 实现(T-132)。
+pub struct PgCommentRepository {
+    pool: PgPool,
+}
+
+impl PgCommentRepository {
+    /// 构造。
+    #[must_use]
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+/// 评论行 → 领域对象。
+fn comment_from_row(
+    id: uuid::Uuid,
+    work_item_id: uuid::Uuid,
+    author_id: Option<uuid::Uuid>,
+    body: String,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+) -> crate::domain::WorkItemComment {
+    crate::domain::WorkItemComment {
+        id: crate::domain::CommentId::from_uuid(id),
+        work_item_id: crate::domain::WorkItemId::from_uuid(work_item_id),
+        author_id: author_id.map(UserId::from_uuid),
+        body,
+        created_at,
+        updated_at,
+    }
+}
+
+type CommentRow = (
+    uuid::Uuid,
+    uuid::Uuid,
+    Option<uuid::Uuid>,
+    String,
+    DateTime<Utc>,
+    DateTime<Utc>,
+);
+
+const COMMENT_COLS: &str =
+    "id, work_item_id, author_id, body, created_at, updated_at";
+
+#[async_trait]
+impl crate::domain::CommentRepository for PgCommentRepository {
+    async fn add(
+        &self,
+        comment: &crate::domain::NewComment,
+    ) -> Result<crate::domain::WorkItemComment, AppError> {
+        let row = sqlx::query_as::<_, CommentRow>(&format!(
+            "INSERT INTO proj_work_item_comment (id, work_item_id, author_id, body) \
+             VALUES ($1, $2, $3, $4) RETURNING {COMMENT_COLS}"
+        ))
+        .bind(uuid::Uuid::new_v4())
+        .bind(comment.work_item_id.as_uuid())
+        .bind(comment.author_id.map(|u| u.as_uuid()))
+        .bind(&comment.body)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(pm_internal)?;
+        Ok(comment_from_row(row.0, row.1, row.2, row.3, row.4, row.5))
+    }
+
+    async fn list_by_item(
+        &self,
+        work_item_id: crate::domain::WorkItemId,
+    ) -> Result<Vec<crate::domain::WorkItemComment>, AppError> {
+        let rows = sqlx::query_as::<_, CommentRow>(&format!(
+            "SELECT {COMMENT_COLS} FROM proj_work_item_comment \
+             WHERE work_item_id = $1 ORDER BY created_at ASC"
+        ))
+        .bind(work_item_id.as_uuid())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(pm_internal)?;
+        Ok(rows
+            .into_iter()
+            .map(|r| comment_from_row(r.0, r.1, r.2, r.3, r.4, r.5))
+            .collect())
+    }
+
+    async fn find_by_id(
+        &self,
+        id: crate::domain::CommentId,
+    ) -> Result<Option<crate::domain::WorkItemComment>, AppError> {
+        let row = sqlx::query_as::<_, CommentRow>(&format!(
+            "SELECT {COMMENT_COLS} FROM proj_work_item_comment WHERE id = $1"
+        ))
+        .bind(id.as_uuid())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(pm_internal)?;
+        Ok(row.map(|r| comment_from_row(r.0, r.1, r.2, r.3, r.4, r.5)))
+    }
+
+    async fn delete(&self, id: crate::domain::CommentId) -> Result<bool, AppError> {
+        let res = sqlx::query("DELETE FROM proj_work_item_comment WHERE id = $1")
+            .bind(id.as_uuid())
+            .execute(&self.pool)
+            .await
+            .map_err(pm_internal)?;
+        Ok(res.rows_affected() > 0)
+    }
+}
+
+/// 工时 PG 实现(T-318)。
+pub struct PgWorklogRepository {
+    pool: PgPool,
+}
+
+impl PgWorklogRepository {
+    /// 构造。
+    #[must_use]
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+/// 工时行 → 领域对象。
+fn worklog_from_row(
+    id: uuid::Uuid,
+    work_item_id: uuid::Uuid,
+    author_id: Option<uuid::Uuid>,
+    minutes: i32,
+    note: String,
+    spent_on: chrono::NaiveDate,
+    created_at: DateTime<Utc>,
+) -> crate::domain::Worklog {
+    crate::domain::Worklog {
+        id: crate::domain::WorklogId::from_uuid(id),
+        work_item_id: crate::domain::WorkItemId::from_uuid(work_item_id),
+        author_id: author_id.map(UserId::from_uuid),
+        minutes: i64::from(minutes),
+        note,
+        spent_on,
+        created_at,
+    }
+}
+
+type WorklogRow = (
+    uuid::Uuid,
+    uuid::Uuid,
+    Option<uuid::Uuid>,
+    i32,
+    String,
+    chrono::NaiveDate,
+    DateTime<Utc>,
+);
+
+#[async_trait]
+impl crate::domain::WorklogRepository for PgWorklogRepository {
+    async fn add(
+        &self,
+        log: &crate::domain::NewWorklog,
+    ) -> Result<crate::domain::Worklog, AppError> {
+        let row = sqlx::query_as::<_, WorklogRow>(
+            "INSERT INTO proj_worklog (id, work_item_id, author_id, minutes, note, spent_on) \
+             VALUES ($1, $2, $3, $4, $5, COALESCE($6, CURRENT_DATE)) \
+             RETURNING id, work_item_id, author_id, minutes, note, spent_on, created_at",
+        )
+        .bind(uuid::Uuid::new_v4())
+        .bind(log.work_item_id.as_uuid())
+        .bind(log.author_id.map(|u| u.as_uuid()))
+        .bind(i32::try_from(log.minutes).unwrap_or(i32::MAX))
+        .bind(&log.note)
+        .bind(log.spent_on)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(pm_internal)?;
+        Ok(worklog_from_row(row.0, row.1, row.2, row.3, row.4, row.5, row.6))
+    }
+
+    async fn list_by_item(
+        &self,
+        work_item_id: crate::domain::WorkItemId,
+    ) -> Result<Vec<crate::domain::Worklog>, AppError> {
+        let rows = sqlx::query_as::<_, WorklogRow>(
+            "SELECT id, work_item_id, author_id, minutes, note, spent_on, created_at \
+             FROM proj_worklog WHERE work_item_id = $1 \
+             ORDER BY spent_on DESC, created_at DESC",
+        )
+        .bind(work_item_id.as_uuid())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(pm_internal)?;
+        Ok(rows
+            .into_iter()
+            .map(|r| worklog_from_row(r.0, r.1, r.2, r.3, r.4, r.5, r.6))
+            .collect())
+    }
+
+    async fn find_by_id(
+        &self,
+        id: crate::domain::WorklogId,
+    ) -> Result<Option<crate::domain::Worklog>, AppError> {
+        let row = sqlx::query_as::<_, WorklogRow>(
+            "SELECT id, work_item_id, author_id, minutes, note, spent_on, created_at \
+             FROM proj_worklog WHERE id = $1",
+        )
+        .bind(id.as_uuid())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(pm_internal)?;
+        Ok(row.map(|r| worklog_from_row(r.0, r.1, r.2, r.3, r.4, r.5, r.6)))
+    }
+
+    async fn delete(&self, id: crate::domain::WorklogId) -> Result<bool, AppError> {
+        let res = sqlx::query("DELETE FROM proj_worklog WHERE id = $1")
+            .bind(id.as_uuid())
+            .execute(&self.pool)
+            .await
+            .map_err(pm_internal)?;
+        Ok(res.rows_affected() > 0)
     }
 }

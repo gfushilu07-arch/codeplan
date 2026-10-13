@@ -119,24 +119,7 @@ impl GitBrowse {
             format!("{reference}:{path}")
         };
         let out = self.git(&["ls-tree", "-l", &arg]).await?;
-        let mut entries: Vec<TreeEntryDto> = out
-            .lines()
-            .filter_map(|line| {
-                // "<mode> <type> <oid> <size>\t<name>";size 对 tree 为 "-"
-                let (meta, name) = line.split_once('\t')?;
-                let mut parts = meta.split_whitespace();
-                let kind = parts.next()?;
-                let oid = parts.next()?;
-                let size = parts.next().and_then(|s| s.parse().ok());
-                let kind = if kind == "tree" { "tree" } else { "blob" };
-                Some(TreeEntryDto {
-                    name: name.to_owned(),
-                    kind: kind.to_owned(),
-                    oid: oid.to_owned(),
-                    size,
-                })
-            })
-            .collect();
+        let mut entries: Vec<TreeEntryDto> = out.lines().filter_map(parse_ls_tree_line).collect();
         entries.sort_by(|a, b| {
             (b.kind == "tree")
                 .cmp(&(a.kind == "tree"))
@@ -310,5 +293,63 @@ impl GitBrowse {
             }
         }
         Ok(entries)
+    }
+}
+
+/// 解析 `git ls-tree -l` 单行。
+///
+/// 格式:`<mode> <type> <oid> <size>\t<name>`,其中目录的 size 为 `-`。
+/// 注意字段顺序:mode 在最前,type 次之 —— 早期实现少读一个字段,导致
+/// 所有条目 kind 恒为 blob、oid 变成类型名。
+fn parse_ls_tree_line(line: &str) -> Option<TreeEntryDto> {
+    let (meta, name) = line.split_once('\t')?;
+    let mut parts = meta.split_whitespace();
+    let _mode = parts.next()?;
+    let kind = parts.next()?;
+    let oid = parts.next()?;
+    let size = parts.next().and_then(|s| s.parse().ok());
+    let kind = if kind == "tree" { "tree" } else { "blob" };
+    Some(TreeEntryDto {
+        name: name.to_owned(),
+        kind: kind.to_owned(),
+        oid: oid.to_owned(),
+        size,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_ls_tree_line;
+
+    #[test]
+    fn parses_blob_line() {
+        let e = parse_ls_tree_line("100644 blob a1b2c3d4e5f6\tREADME.md").expect("应解析成功");
+        assert_eq!(e.name, "README.md");
+        assert_eq!(e.kind, "blob");
+        assert_eq!(e.oid, "a1b2c3d4e5f6");
+        assert_eq!(e.size, None, "本行未带 -l 尺寸时不应臆造");
+    }
+
+    #[test]
+    fn parses_blob_line_with_size() {
+        let e = parse_ls_tree_line("100644 blob 1234567890ab 1234\tsrc/main.rs").expect("应解析成功");
+        assert_eq!(e.name, "src/main.rs");
+        assert_eq!(e.kind, "blob");
+        assert_eq!(e.oid, "1234567890ab");
+        assert_eq!(e.size, Some(1234));
+    }
+
+    #[test]
+    fn parses_tree_line_and_marks_directory() {
+        let e = parse_ls_tree_line("040000 tree 4d5a6b7c8d9e -\tdist").expect("应解析成功");
+        assert_eq!(e.name, "dist");
+        assert_eq!(e.kind, "tree", "目录必须识别为 tree,否则前端无法展开");
+        assert_eq!(e.oid, "4d5a6b7c8d9e");
+        assert_eq!(e.size, None, "目录无大小");
+    }
+
+    #[test]
+    fn rejects_line_without_tab() {
+        assert!(parse_ls_tree_line("100644 blob abc").is_none());
     }
 }

@@ -34,6 +34,10 @@ pub struct TransportState {
     pub repo_root: String,
     /// 内部钩子密钥。
     pub hook_secret: String,
+    /// LFS 子系统(None = 未启用)。
+    pub lfs: Option<crate::lfs::LfsState>,
+    /// 推送门禁(T-205;None = 不启用保护规则)。
+    pub push_guard: Option<Arc<dyn codeplan_kernel::git::PushGuard>>,
 }
 
 /// Git 传输路由:`/git/{*rest}` 全方法。
@@ -41,6 +45,7 @@ pub fn routes(state: TransportState) -> axum::Router<TransportState> {
     Router::new()
         .route("/git/{*rest}", any(git_proxy))
         .route("/internal/hooks/post-receive", post(post_receive))
+        .route("/internal/hooks/pre-receive", post(pre_receive))
         .with_state(state)
 }
 
@@ -104,6 +109,15 @@ async fn git_proxy(State(st): State<TransportState>, req: Request) -> Result<Res
     };
     let repo = st.svc.repository_by_full_name(&full_name).await?;
 
+    // LFS 分流(T-202):info/lfs/* 独立认证,不走 CGI
+    if crate::lfs::parse_route(&rest).is_some() {
+        let Some(lfs) = st.lfs.clone() else {
+            return Err(AppError::not_found(DOMAIN_CODE, "LFS 未启用"));
+        };
+        let req = Request::from_parts(parts, body);
+        return crate::lfs::handle(st.clone(), lfs, repo, req).await;
+    }
+
     // 鉴权(Basic;密码位 = 会话 JWT)。401 必须带 WWW-Authenticate 挑战头,
     // 否则 git 客户端不会自动携带凭据。
     let unauthorized = || -> Response {
@@ -123,12 +137,17 @@ async fn git_proxy(State(st): State<TransportState>, req: Request) -> Result<Res
         return Ok(unauthorized());
     };
 
-    // 授权:push → Write,fetch → Read
-    let action = if is_push(&method, &rest, query.as_deref()) {
-        Action::Write
-    } else {
-        Action::Read
-    };
+    // 授权:push → Write,fetch → Read;PAT 需对应 scope(T-210)
+    let push = is_push(&method, &rest, query.as_deref());
+    let required_scope = if push { "repo:write" } else { "repo:read" };
+    if !user.has_scope(required_scope) {
+        return Ok((
+            StatusCode::FORBIDDEN,
+            format!("PAT 缺少 {required_scope} scope"),
+        )
+            .into_response());
+    }
+    let action = if push { Action::Write } else { Action::Read };
     let reference = codeplan_kernel::authz::ResourceRef::Repo(
         codeplan_kernel::ids::RepoId::from_uuid(repo.id.as_uuid()),
     );
@@ -247,6 +266,53 @@ async fn run_cgi(
         }
     }
     Ok((status, headers, payload))
+}
+
+/// pre-receive 回调:逐行 `old new ref` → PushGuard 校验,拒绝时 403 + 原因。
+async fn pre_receive(
+    State(st): State<TransportState>,
+    headers: HeaderMap,
+    body: String,
+) -> Result<Response, AppError> {
+    let secret = headers
+        .get("X-Hook-Secret")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    if secret != st.hook_secret {
+        return Err(AppError::forbidden(DOMAIN_CODE, "钩子密钥无效"));
+    }
+    let Some(guard) = st.push_guard.as_ref() else {
+        return Ok((StatusCode::OK, axum::Json(json!({"code": "OK"}))).into_response());
+    };
+    let git_dir = headers
+        .get("X-Hook-Repo")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    let full_name = full_name_from_git_dir(git_dir, &st.repo_root);
+    if full_name.is_empty() {
+        // 仓库路径解析失败:无法定位规则,放行(与"无规则"同义),由服务日志暴露
+        eprintln!("[pre-receive] 无法解析仓库路径: {git_dir}");
+        return Ok((StatusCode::OK, axum::Json(json!({"code": "OK"}))).into_response());
+    }
+    let mut refs = Vec::new();
+    for line in body.lines().filter(|l| !l.trim().is_empty()) {
+        let mut it = line.split_whitespace();
+        let (Some(old), Some(new), Some(ref_name)) = (it.next(), it.next(), it.next()) else {
+            continue;
+        };
+        refs.push(codeplan_kernel::git::PushRef {
+            ref_name: ref_name.to_owned(),
+            old: old.to_owned(),
+            new: new.to_owned(),
+        });
+    }
+    if refs.is_empty() {
+        return Ok((StatusCode::OK, "").into_response());
+    }
+    match guard.check_push(&full_name, &refs).await {
+        Ok(force_checks) => Ok((StatusCode::OK, force_checks.join("\n")).into_response()),
+        Err(reason) => Ok((StatusCode::FORBIDDEN, reason).into_response()),
+    }
 }
 
 /// post-receive 回调体(原始 stdin 文本)。
