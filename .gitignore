@@ -20,6 +20,7 @@ storybook-static/
 secrets/
 
 # 数据与运行时
+/backups
 /data
 /deploy/data
 *.log
